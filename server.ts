@@ -201,6 +201,68 @@ async function startServer() {
     }
   });
 
+  // Device Connection API for Mobile Apps
+  app.post("/api/device/connect", async (req, res) => {
+    const { apiKey, apiSecret, deviceName, deviceId, model, version } = req.body;
+
+    if (!apiKey || !apiSecret) {
+      return res.status(400).json({ status: "error", message: "এপিআই কি এবং সিক্রেট কি প্রয়োজন" });
+    }
+
+    try {
+      // 1. Verify credentials
+      const usersRef = collection(db, 'users');
+      const q = query(usersRef, where('apiKey', '==', apiKey), where('apiSecret', '==', apiSecret), limit(1));
+      const userSnap = await getDocs(q);
+
+      if (userSnap.empty) {
+        return res.status(401).json({ status: "error", message: "ভুল এপিআই কি অথবা সিক্রেট কি ব্যবহার করা হয়েছে" });
+      }
+
+      const userId = userSnap.docs[0].id;
+
+      // 2. Register/Update Device
+      const devicesRef = collection(db, 'devices');
+      // If a deviceId is provided by the app, try to find and update it
+      let deviceSnap;
+      if (deviceId) {
+        const qDevice = query(devicesRef, where('userId', '==', userId), where('deviceId', '==', deviceId), limit(1));
+        deviceSnap = await getDocs(qDevice);
+      }
+
+      const deviceData = {
+        userId,
+        name: deviceName || model || "Unknown Device",
+        deviceId: deviceId || `DEV_${Math.random().toString(36).substring(7).toUpperCase()}`,
+        model: model || "Unknown",
+        version: version || "1.0.0",
+        status: "online",
+        lastActive: new Date().toISOString(),
+      };
+
+      if (deviceSnap && !deviceSnap.empty) {
+        // Update existing
+        await updateDoc(doc(db, 'devices', deviceSnap.docs[0].id), deviceData);
+      } else {
+        // Create new
+        await addDoc(devicesRef, deviceData);
+      }
+
+      res.json({ 
+        status: "success", 
+        message: "ডিভাইসটি সফলভাবে কানেক্ট করা হয়েছে",
+        data: {
+          userId,
+          deviceName: deviceData.name,
+          deviceId: deviceData.deviceId
+        }
+      });
+    } catch (error) {
+      console.error("Device Connection Error:", error);
+      res.status(500).json({ status: "error", message: "সার্ভারে সমস্যা হয়েছে, আবার চেষ্টা করুন" });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

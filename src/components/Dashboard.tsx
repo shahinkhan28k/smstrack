@@ -1,0 +1,503 @@
+import React, { useState, useEffect } from 'react';
+import { User } from 'firebase/auth';
+import { UserProfile, Transaction, Device, DepositRequest, PlanDefinition } from '../types';
+import { transactionService, deviceService, depositService } from '../lib/services';
+import Overview from './Overview';
+import TransactionsList from './TransactionsList';
+import DeviceManager from './DeviceManager';
+import SettingsPanel from './SettingsPanel';
+import Billing from './Billing';
+import MyDeposits from './MyDeposits';
+import AdminDeposits from './AdminDeposits';
+import AdminSystemConfig from './AdminSystemConfig';
+import AdminPlans from './AdminPlans';
+import { cn, generateApiKey } from '../lib/utils';
+import { 
+  LayoutDashboard, 
+  ListOrdered, 
+  Smartphone, 
+  Settings, 
+  LogOut,
+  Bell,
+  Search,
+  User as UserIcon,
+  CreditCard,
+  Plus,
+  X,
+  Check,
+  ShieldCheck,
+  QrCode,
+  Wallet,
+  Globe,
+  Zap
+} from 'lucide-react';
+import { collection, addDoc, updateDoc, doc, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { db } from '../lib/firebase';
+
+type Tab = 'overview' | 'transactions' | 'billing' | 'deposits' | 'devices' | 'settings' | 'admin-deposits' | 'admin-config' | 'admin-plans';
+
+interface DashboardProps {
+  user: User;
+  profile: UserProfile | null;
+  onLogout: () => void;
+  onRefreshProfile: () => Promise<void>;
+}
+
+export default function Dashboard({ user, profile, onLogout, onRefreshProfile }: DashboardProps) {
+  const [activeTab, setActiveTab] = useState<Tab>('overview');
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [depositRequests, setDepositRequests] = useState<DepositRequest[]>([]);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
+  const [newDeviceName, setNewDeviceName] = useState('');
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [availablePlans, setAvailablePlans] = useState<PlanDefinition[]>([]);
+
+  useEffect(() => {
+    const unsub = onSnapshot(query(collection(db, 'plans'), orderBy('order', 'asc')), (snap) => {
+      setAvailablePlans(snap.docs.map(d => ({ id: d.id, ...d.data() } as PlanDefinition)));
+    });
+    return unsub;
+  }, []);
+
+  const handleAddDevice = async () => {
+    if (!profile || !newDeviceName) return;
+    try {
+      await addDoc(collection(db, 'devices'), {
+        userId: profile.id,
+        deviceName: newDeviceName,
+        deviceToken: generateApiKey().substring(0, 16),
+        status: 'offline',
+        lastSeen: null
+      });
+      setShowAddDeviceModal(false);
+      setNewDeviceName('');
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleUpgrade = async (planDef: PlanDefinition | { name: string, price: number }) => {
+    if (!profile) return;
+    
+    const userBalance = profile.balance || 0;
+    if (userBalance < planDef.price) {
+      alert(`আপনার পর্যাপ্ত ব্যালেন্স নেই। অনুগ্রহ করে ${planDef.price - userBalance} TK ডিপোজিট করুন।`);
+      setActiveTab('billing');
+      setShowUpgradeModal(false);
+      return;
+    }
+
+    if (!confirm(`${planDef.name} প্যাকেজটি ${planDef.price} TK দিয়ে কিনতে চান?`)) return;
+
+    try {
+      await updateDoc(doc(db, 'users', profile.id), { 
+        plan: planDef.name.toLowerCase(),
+        balance: userBalance - planDef.price
+      });
+      await onRefreshProfile();
+      setShowUpgradeModal(false);
+      alert(`${planDef.name} প্যাকেজটি সফলভাবে একটিভ করা হয়েছে।`);
+    } catch (e) {
+      console.error(e);
+      alert("প্যাকেজ আপডেট করতে সমস্যা হয়েছে।");
+    }
+  };
+
+  useEffect(() => {
+    if (!profile) return;
+    
+    const unsubTx = transactionService.subscribeToTransactions(profile.id, setTransactions);
+    const unsubDv = deviceService.subscribeToDevices(profile.id, setDevices);
+    const unsubDr = depositService.subscribeToRequests(profile.id, setDepositRequests);
+
+    return () => {
+      unsubTx();
+      unsubDv();
+      unsubDr();
+    };
+  }, [profile]);
+
+  const navItems = [
+    { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+    { id: 'transactions', label: 'History', icon: ListOrdered },
+    { id: 'billing', label: 'Add Funds', icon: Wallet },
+    { id: 'deposits', label: 'My Deposits', icon: ListOrdered },
+    { id: 'devices', label: 'Devices', icon: Smartphone },
+    { id: 'settings', label: 'Settings', icon: Settings },
+  ] as const;
+
+  const adminNavItems = [
+    { id: 'admin-deposits', label: 'Deposits', icon: Wallet },
+    { id: 'admin-config', label: 'App Config', icon: Globe },
+    { id: 'admin-plans', label: 'Manage Plans', icon: Zap },
+  ] as const;
+
+  return (
+    <div className="min-h-screen bg-[#F8FAFC] flex relative">
+      {/* Mobile Sidebar Overlay */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/40 z-40 lg:hidden backdrop-blur-sm"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
+      {/* Sidebar */}
+      <aside className={cn(
+        "fixed inset-y-0 left-0 z-50 w-64 border-r border-gray-200 bg-white flex flex-col transition-transform duration-300 lg:translate-x-0 lg:static lg:h-screen",
+        isSidebarOpen ? "translate-x-0" : "-translate-x-full"
+      )}>
+        <div className="p-6 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="bg-blue-600 p-2 rounded-lg">
+              <Smartphone className="text-white w-5 h-5" />
+            </div>
+            <span className="text-xl font-bold tracking-tight text-gray-900">SMSGate</span>
+          </div>
+          <button className="lg:hidden p-2 text-gray-400" onClick={() => setIsSidebarOpen(false)}>
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
+          {navItems.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => { setActiveTab(item.id); setIsSidebarOpen(false); }}
+              className={cn(
+                "w-full flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-lg transition-all",
+                activeTab === item.id 
+                  ? "bg-blue-50 text-blue-700" 
+                  : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+              )}
+            >
+              <item.icon className="w-4 h-4" />
+              {item.label}
+            </button>
+          ))}
+
+          {profile?.role === 'admin' && (
+            <>
+              <div className="pt-4 pb-2 px-3">
+                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Admin Panel</p>
+              </div>
+              {adminNavItems.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => { setActiveTab(item.id); setIsSidebarOpen(false); }}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-lg transition-all",
+                    activeTab === item.id 
+                      ? "bg-purple-50 text-purple-700" 
+                      : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                  )}
+                >
+                  <item.icon className="w-4 h-4" />
+                  {item.label}
+                </button>
+              ))}
+            </>
+          )}
+        </nav>
+
+        <div className="p-4 border-t border-gray-100">
+          <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl p-4 text-white">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">{profile?.plan} Plan</span>
+              <CreditCard className="w-3 h-3" />
+            </div>
+            <div className="text-sm font-medium mb-3">Upgrade for more devices</div>
+            <button 
+              onClick={() => setShowUpgradeModal(true)}
+              className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-xs font-bold rounded-lg transition-colors"
+            >
+              Upgrade Now
+            </button>
+          </div>
+
+          <button 
+            onClick={onLogout}
+            className="w-full mt-4 flex items-center gap-3 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-all"
+          >
+            <LogOut className="w-4 h-4" />
+            Logout
+          </button>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className="flex-1 flex flex-col h-screen overflow-hidden w-full">
+        {/* Header */}
+        <header className="h-16 border-b border-gray-200 bg-white flex items-center justify-between px-4 sm:px-8 shrink-0">
+          <div className="flex items-center gap-4 flex-1">
+            <button 
+              className="lg:hidden p-2 -ml-2 text-gray-600 hover:bg-gray-100 rounded-lg"
+              onClick={() => setIsSidebarOpen(true)}
+            >
+              <LayoutDashboard className="w-6 h-6" />
+            </button>
+            <div className="relative max-w-md w-full hidden sm:block">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input 
+                type="text" 
+                placeholder="Search transactions..." 
+                className="w-full pl-10 pr-4 py-2 text-sm border-none bg-gray-50 rounded-lg focus:ring-1 focus:ring-blue-500 transition-all outline-hidden"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 sm:gap-6">
+            <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 bg-emerald-50 text-emerald-700 rounded-full border border-emerald-100">
+              <Wallet className="w-4 h-4 shrink-0" />
+              <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider">Balance: {profile?.balance || 0} TK</span>
+            </div>
+
+            <button className="relative text-gray-400 hover:text-gray-600 transition-colors hidden xs:block">
+              <Bell className="w-5 h-5" />
+              <span className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
+            </button>
+
+            <div className="relative">
+              <button 
+                onClick={() => setShowProfileMenu(!showProfileMenu)}
+                className="flex items-center gap-3 pl-6 border-l border-gray-100 group cursor-pointer"
+              >
+                <div className="text-right hidden sm:block">
+                  <div className="text-sm font-bold text-gray-900 group-hover:text-blue-600 transition-colors">{profile?.name}</div>
+                  <div className="text-xs text-gray-500">{profile?.plan} Plan</div>
+                </div>
+                <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 border-2 border-transparent group-hover:border-blue-200 transition-all">
+                  <UserIcon className="w-5 h-5" />
+                </div>
+              </button>
+
+              {showProfileMenu && (
+                <div className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-50 animate-in fade-in zoom-in-95 duration-100">
+                  <div className="px-4 py-2 border-b border-gray-50 mb-1">
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Account</p>
+                  </div>
+                  <button onClick={() => { setActiveTab('settings'); setShowProfileMenu(false); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+                    <UserIcon className="w-4 h-4" /> Profile Details
+                  </button>
+                  <button onClick={() => { setActiveTab('billing'); setShowProfileMenu(false); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+                    <CreditCard className="w-4 h-4" /> Billing & Deposit
+                  </button>
+                  <button onClick={() => { setActiveTab('settings'); setShowProfileMenu(false); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+                    <Settings className="w-4 h-4" /> API Settings
+                  </button>
+                  <div className="my-1 border-t border-gray-50"></div>
+                  <button onClick={onLogout} className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 font-semibold">
+                    <LogOut className="w-4 h-4" /> Sign Out
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </header>
+
+        {/* Content Area */}
+        <div className="flex-1 overflow-y-auto p-4 sm:p-8">
+          <div className="max-w-6xl mx-auto space-y-6 sm:space-y-8">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl sm:text-2xl font-bold text-gray-900 leading-tight">
+                  {activeTab === 'overview' && 'Dashboard Overview'}
+                  {activeTab === 'transactions' && 'Transaction History'}
+                  {activeTab === 'billing' && 'Deposit Funds'}
+                  {activeTab === 'deposits' && 'My Deposits'}
+                  {activeTab === 'devices' && 'Connected Devices'}
+                  {activeTab === 'settings' && 'Account Settings'}
+                  {activeTab === 'admin-deposits' && 'Deposit Management'}
+                  {activeTab === 'admin-config' && 'App Configuration'}
+                  {activeTab === 'admin-plans' && 'Plan Management'}
+                </h2>
+                <p className="text-gray-500 text-sm mt-1">
+                  {activeTab === 'overview' && 'View your revenue and growth trends.'}
+                  {activeTab === 'transactions' && 'A detailed log of all processed payments.'}
+                  {activeTab === 'billing' && 'Add funds to your wallet using mobile money.'}
+                  {activeTab === 'deposits' && 'View status of your deposit requests.'}
+                  {activeTab === 'devices' && 'Management of your Android SMS gateways.'}
+                  {activeTab === 'settings' && 'Manage your API keys and profile.'}
+                  {activeTab === 'admin-deposits' && 'Approve or reject user deposit requests.'}
+                  {activeTab === 'admin-config' && 'Update payment numbers and system settings.'}
+                  {activeTab === 'admin-plans' && 'Add, edit or remove subscription plans.'}
+                </p>
+              </div>
+              
+              {activeTab === 'devices' && (
+                <button 
+                  onClick={() => setShowAddDeviceModal(true)}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 shadow-sm transition-all"
+                >
+                  <Plus className="w-4 h-4" />
+                  Connect New Device
+                </button>
+              )}
+            </div>
+
+            {activeTab === 'overview' && (
+              <Overview 
+                transactions={transactions} 
+                devices={devices} 
+                profile={profile} 
+                depositRequests={depositRequests}
+              />
+            )}
+            {activeTab === 'transactions' && (
+              <TransactionsList transactions={transactions} depositRequests={depositRequests} />
+            )}
+            {activeTab === 'billing' && (
+              <Billing profile={profile} onUpgrade={() => setShowUpgradeModal(true)} />
+            )}
+            {activeTab === 'deposits' && (
+              <MyDeposits profile={profile} />
+            )}
+            {activeTab === 'admin-deposits' && profile?.role === 'admin' && (
+              <AdminDeposits />
+            )}
+            {activeTab === 'admin-plans' && profile?.role === 'admin' && (
+              <AdminPlans />
+            )}
+            {activeTab === 'admin-config' && profile?.role === 'admin' && (
+              <AdminSystemConfig />
+            )}
+            {activeTab === 'devices' && (
+              <DeviceManager 
+                devices={devices} 
+                userId={profile?.id || ''} 
+                onShowAddDevice={() => setShowAddDeviceModal(true)} 
+              />
+            )}
+            {activeTab === 'settings' && (
+              <SettingsPanel 
+                profile={profile} 
+                onRefresh={onRefreshProfile} 
+                onShowUpgrade={() => setShowUpgradeModal(true)}
+              />
+            )}
+          </div>
+        </div>
+
+        {/* Upgrade Modal */}
+        {showUpgradeModal && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="bg-white rounded-3xl w-full max-w-4xl overflow-hidden shadow-2xl flex flex-col md:flex-row">
+              <div className="md:w-1/3 bg-blue-600 p-10 text-white flex flex-col justify-between">
+                <div>
+                  <ShieldCheck className="w-12 h-12 mb-6" />
+                  <h3 className="text-3xl font-black mb-4">Choose Your Power.</h3>
+                  <p className="text-blue-100 text-sm leading-relaxed">Unlock unlimited devices, priority support, and custom webhooks for your growing business.</p>
+                </div>
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3 text-xs font-bold text-blue-200">
+                    <Check className="w-4 h-4" /> 24/7 Priority Support
+                  </div>
+                  <div className="flex items-center gap-3 text-xs font-bold text-blue-200">
+                    <Check className="w-4 h-4" /> Unlimited API Calls
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex-1 p-10 relative">
+                <button onClick={() => setShowUpgradeModal(false)} className="absolute right-6 top-6 text-gray-400 hover:text-gray-600">
+                  <X className="w-6 h-6" />
+                </button>
+                
+                <h4 className="text-xl font-bold mb-8 text-gray-900">Select a Plan</h4>
+                <div className="grid sm:grid-cols-2 gap-6 max-h-[500px] overflow-y-auto pr-2">
+                  {availablePlans.length === 0 ? (
+                    <div className="col-span-full text-center py-12 text-gray-400">Loading plans...</div>
+                  ) : (
+                    availablePlans.map((p, i) => (
+                      <div key={i} className={cn(
+                        "p-6 rounded-2xl border-2 transition-all cursor-pointer hover:scale-[1.02]",
+                        p.isPopular ? "border-blue-600 bg-blue-50/50" : "border-gray-100 hover:border-blue-200"
+                      )}>
+                        {p.isPopular && <span className="bg-blue-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest mb-3 inline-block">Most Popular</span>}
+                        {p.badge && !p.isPopular && <span className="bg-gray-100 text-gray-500 text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest mb-3 inline-block">{p.badge}</span>}
+                        <div className="text-lg font-bold text-gray-900">{p.name}</div>
+                        <div className="text-3xl font-black text-gray-900 mt-2">৳{p.price}<span className="text-xs text-gray-500 font-medium">/mo</span></div>
+                        <ul className="mt-6 space-y-3">
+                          {p.features.map((feature, idx) => (
+                            <li key={idx} className="flex items-center gap-2 text-xs font-medium text-gray-600">
+                              <Check className="w-3.5 h-3.5 text-blue-600" /> {feature}
+                            </li>
+                          ))}
+                        </ul>
+                        <button 
+                          onClick={() => handleUpgrade(p)}
+                          className={cn(
+                            "w-full mt-8 py-3 rounded-xl font-bold text-sm transition-all shadow-md",
+                            p.isPopular ? "bg-blue-600 text-white shadow-blue-100" : "bg-gray-100 text-gray-900"
+                          )}
+                        >
+                          Choose {p.name}
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Add Device Modal */}
+        {showAddDeviceModal && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl w-full max-w-md p-8 animate-in zoom-in-95 duration-200 shadow-2xl relative">
+              <button onClick={() => setShowAddDeviceModal(false)} className="absolute right-6 top-6 text-gray-400 hover:text-gray-600">
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="bg-blue-50 w-16 h-16 rounded-2xl flex items-center justify-center mb-6">
+                <Smartphone className="w-8 h-8 text-blue-600" />
+              </div>
+
+              <h3 className="text-2xl font-bold text-gray-900 mb-2 font-display">Pair New Device</h3>
+              <p className="text-gray-500 text-sm mb-8 leading-relaxed">Enter a name for your device to generate a unique pairing token for the Android app.</p>
+
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Device Name</label>
+                  <input 
+                    autoFocus
+                    type="text" 
+                    value={newDeviceName}
+                    onChange={(e) => setNewDeviceName(e.target.value)}
+                    placeholder="e.g. My Samsung S21"
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-blue-500 focus:bg-white outline-hidden transition-all text-sm font-medium"
+                  />
+                </div>
+
+                <div className="p-4 bg-amber-50 rounded-xl flex gap-3 border border-amber-100">
+                  <QrCode className="w-5 h-5 text-amber-600 shrink-0" />
+                  <p className="text-[11px] text-amber-700 font-medium">After saving, you'll get a pairing token to enter in the SMSGate Android app.</p>
+                </div>
+
+                <div className="flex gap-3 pt-4">
+                  <button 
+                    onClick={() => setShowAddDeviceModal(false)}
+                    className="flex-1 py-3 text-sm font-bold text-gray-600 bg-gray-50 hover:bg-gray-100 rounded-xl transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={handleAddDevice}
+                    disabled={!newDeviceName}
+                    className="flex-1 py-3 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-lg shadow-blue-200 transition-all disabled:opacity-50"
+                  >
+                    Generate Token
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}

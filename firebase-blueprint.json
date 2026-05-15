@@ -1,0 +1,160 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and settings",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "admin"] },
+        "plan": { "type": "string" },
+        "balance": { "type": "number" },
+        "apiKey": { "type": "string" },
+        "apiSecret": { "type": "string" },
+        "webhookUrl": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "email", "role", "plan", "createdAt"]
+    },
+    "Device": {
+      "title": "Device",
+      "description": "Connected Android devices",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "deviceName": { "type": "string" },
+        "deviceToken": { "type": "string" },
+        "lastSeen": { "type": "string", "format": "date-time" },
+        "status": { "type": "string" }
+      },
+      "required": ["userId", "deviceName", "status"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Extracted transaction details",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "deviceId": { "type": "string" },
+        "provider": { "type": "string" },
+        "amount": { "type": "number" },
+        "trxId": { "type": "string" },
+        "sender": { "type": "string" },
+        "message": { "type": "string" },
+        "phone": { "type": "string" },
+        "transactionTime": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "provider", "amount", "trxId", "createdAt"]
+    },
+    "Subscription": {
+      "title": "Subscription",
+      "description": "Billing information",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "plan": { "type": "string" },
+        "amount": { "type": "number" },
+        "startDate": { "type": "string", "format": "date-time" },
+        "expireDate": { "type": "string", "format": "date-time" },
+        "status": { "type": "string" },
+        "paymentMethod": { "type": "string" }
+      },
+      "required": ["userId", "plan", "amount", "status"]
+    },
+    "DepositRequest": {
+      "title": "Deposit Request",
+      "description": "Requests from external websites to match with SMS",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "externalId": { "type": "string" },
+        "amount": { "type": "number" },
+        "senderPhone": { "type": "string" },
+        "provider": { "type": "string" },
+        "webhookUrl": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "matched", "failed"] },
+        "matchedTransactionId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "amount", "status", "createdAt"]
+    },
+    "UserDeposit": {
+      "title": "User Deposit",
+      "description": "Direct deposit by user for plan upgrade",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "method": { "type": "string" },
+        "amount": { "type": "number" },
+        "trxId": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "method", "amount", "status", "createdAt"]
+    },
+    "SystemConfig": {
+      "title": "System Config",
+      "description": "Global settings like payment numbers",
+      "type": "object",
+      "properties": {
+        "bkashNumber": { "type": "string" },
+        "nagadNumber": { "type": "string" },
+        "rocketNumber": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "PlanDefinition": {
+      "title": "Plan Definition",
+      "description": "Dynamic subscription plans",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "price": { "type": "number" },
+        "features": { "type": "array", "items": { "type": "string" } },
+        "badge": { "type": "string" },
+        "isPopular": { "type": "boolean" },
+        "order": { "type": "number" }
+      },
+      "required": ["name", "price", "features"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/devices/{deviceId}": {
+      "schema": "Device",
+      "description": "Registered devices"
+    },
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Transaction logs"
+    },
+    "/subscriptions/{subId}": {
+      "schema": "Subscription",
+      "description": "Subscription records"
+    },
+    "/depositRequests/{requestId}": {
+      "schema": "DepositRequest",
+      "description": "Incoming matching requests"
+    },
+    "/userDeposits/{depositId}": {
+      "schema": "UserDeposit",
+      "description": "User balance deposits"
+    },
+    "/system/config": {
+      "schema": "SystemConfig",
+      "description": "Global app configuration"
+    },
+    "/plans/{planId}": {
+      "schema": "PlanDefinition",
+      "description": "Subscription plans"
+    }
+  }
+}

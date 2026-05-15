@@ -1,0 +1,6 @@
+{
+  "name": "SMS Gateway & Payment Tracker",
+  "description": "A SaaS platform for tracking mobile money transactions (bKash, Nagad, etc.) via Android SMS Gateway.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

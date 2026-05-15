@@ -202,11 +202,22 @@ async function startServer() {
   });
 
   // Device Connection API for Mobile Apps
+  app.get("/api/device/connect", (req, res) => {
+    res.json({ 
+      status: "active", 
+      message: "Gateway API logic is running. Use POST to connect devices.",
+      endpoint: "/api/device/connect"
+    });
+  });
+
   app.post("/api/device/connect", async (req, res) => {
-    const { apiKey, apiSecret, deviceName, deviceId, model, version } = req.body;
+    // Support both camelCase and snake_case for mobile app compatibility
+    const apiKey = req.body.apiKey || req.body.api_key;
+    const apiSecret = req.body.apiSecret || req.body.secret_key;
+    const { deviceName, deviceId, model, version } = req.body;
 
     if (!apiKey || !apiSecret) {
-      return res.status(400).json({ status: "error", message: "এপিআই কি এবং সিক্রেট কি প্রয়োজন" });
+      return res.status(400).json({ status: false, message: "এপিআই কি এবং সিক্রেট কি প্রদান করুন (apiKey/api_key, apiSecret/secret_key)" });
     }
 
     try {
@@ -249,7 +260,7 @@ async function startServer() {
       }
 
       res.json({ 
-        status: "success", 
+        status: true, 
         message: "ডিভাইসটি সফলভাবে কানেক্ট করা হয়েছে",
         data: {
           userId,
@@ -259,7 +270,7 @@ async function startServer() {
       });
     } catch (error) {
       console.error("Device Connection Error:", error);
-      res.status(500).json({ status: "error", message: "সার্ভারে সমস্যা হয়েছে, আবার চেষ্টা করুন" });
+      res.status(500).json({ status: false, message: "সার্ভারে সমস্যা হয়েছে, আবার চেষ্টা করুন" });
     }
   });
 

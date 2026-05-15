@@ -314,6 +314,34 @@ export default function SettingsPanel({ profile, onRefresh, onShowUpgrade }: Set
           </button>
         </div>
       </div>
+      {/* Mobile App Setup Guide */}
+      <div className="bg-blue-600 rounded-3xl p-8 text-white shadow-xl shadow-blue-100 overflow-hidden relative group">
+        <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-110 transition-transform">
+          <Smartphone className="w-32 h-32" />
+        </div>
+        <div className="relative z-10">
+          <h3 className="text-xl font-bold mb-2">Mobile App Setup</h3>
+          <p className="text-blue-100 text-sm mb-6 max-w-md">কানেক্টেড ডিভাইস থেকে এসএমএস রিড করার জন্য নিচের এপিআই কনফিগুরেশন আপনার অ্যান্ড্রয়েড অ্যাপে ব্যবহার করুন।</p>
+          
+          <div className="space-y-4">
+            <div className="bg-blue-700/50 p-4 rounded-xl border border-blue-500/30">
+              <p className="text-[10px] font-black uppercase tracking-widest text-blue-300 mb-1">API Endpoint</p>
+              <code className="text-xs break-all font-mono">{window.location.origin}/api/device/connect</code>
+            </div>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="bg-blue-700/50 p-4 rounded-xl border border-blue-500/30">
+                <p className="text-[10px] font-black uppercase tracking-widest text-blue-300 mb-1">Method</p>
+                <code className="text-xs font-mono">POST (application/json)</code>
+              </div>
+              <div className="bg-blue-700/50 p-4 rounded-xl border border-blue-500/30">
+                <p className="text-[10px] font-black uppercase tracking-widest text-blue-300 mb-1">Auth Type</p>
+                <code className="text-xs font-mono">API Key & Secret</code>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

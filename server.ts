@@ -281,8 +281,16 @@ async function startServer() {
     });
   });
 
+  app.get("/api/v1/devices/connect", (req, res) => {
+    res.json({ 
+      status: true, 
+      message: "Gateway V1 Devices API logic is running. Use POST to connect devices."
+    });
+  });
+
   app.post("/api/device/connect", deviceConnectHandler);
   app.post("/api/v1/device/connect", deviceConnectHandler);
+  app.post("/api/v1/devices/connect", deviceConnectHandler);
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

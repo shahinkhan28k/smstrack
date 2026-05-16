@@ -114,7 +114,7 @@ export default function AdminDeposits() {
                         </div>
                         <div>
                           <div className="text-sm font-bold text-gray-900">{d.userName || 'Unknown'}</div>
-                          <div className="text-[10px] text-gray-400 font-mono">{d.userId.substring(0, 8)}...</div>
+                          <div className="text-[10px] text-gray-400 font-mono">{d.userId?.substring(0, 8) || 'unknown'}...</div>
                         </div>
                       </div>
                     </td>

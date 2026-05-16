@@ -131,7 +131,7 @@ export default function TransactionsList({ transactions, depositRequests }: Tran
             <tbody className="divide-y divide-gray-50">
               {depositRequests.map((req) => (
                 <tr key={req.id} className="hover:bg-gray-50/50 transition-colors group">
-                  <td className="px-6 py-4 text-sm font-bold text-gray-900 truncate max-w-[120px]">{req.externalId || req.id.substring(0, 8)}</td>
+                  <td className="px-6 py-4 text-sm font-bold text-gray-900 truncate max-w-[120px]">{req.externalId || req.id?.substring(0, 8) || 'N/A'}</td>
                   <td className="px-6 py-4 text-sm font-bold text-gray-900">{formatCurrency(req.amount)}</td>
                   <td className="px-6 py-4">
                     {req.status === 'matched' ? (

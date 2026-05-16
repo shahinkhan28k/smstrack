@@ -51,7 +51,7 @@ export default function DeviceManager({ devices, userId, onShowAddDevice }: Devi
               <div className="flex justify-between text-xs">
                 <span className="text-gray-400 font-medium">Device Token</span>
                 <span className="text-gray-900 font-mono font-bold tracking-tighter truncate w-32 text-right">
-                  {device.deviceToken.substring(0, 8)}...
+                  {device.deviceToken?.substring(0, 8) || device.id.substring(0, 8)}...
                 </span>
               </div>
               <div className="flex justify-between text-xs">

@@ -15,7 +15,7 @@ const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT || 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json());
 
@@ -237,6 +237,7 @@ async function startServer() {
         userId,
         name: deviceName || model || "Unknown Device",
         deviceId: deviceId || `DEV_${Math.random().toString(36).substring(7).toUpperCase()}`,
+        deviceToken: `TOK_${Math.random().toString(36).substring(2, 10).toUpperCase()}`,
         model: model || "Unknown",
         version: version || "1.0.0",
         status: "online",

@@ -8,12 +8,13 @@ import DeviceManager from './DeviceManager';
 import SettingsPanel from './SettingsPanel';
 import Billing from './Billing';
 import MyDeposits from './MyDeposits';
+import UserAllLogs from './UserAllLogs';
 import AdminDeposits from './AdminDeposits';
 import AdminSystemConfig from './AdminSystemConfig';
 import AdminPlans from './AdminPlans';
 import AdminUsers from './AdminUsers';
 import AdminAllDevices from './AdminAllDevices';
-import AdminAllTransactions from './AdminAllTransactions';
+import AdminAllLogs from './AdminAllLogs';
 import { cn, generateApiKey, generateApiSecret } from '../lib/utils';
 import { 
   LayoutDashboard, 
@@ -40,7 +41,7 @@ import {
 import { collection, addDoc, updateDoc, doc, onSnapshot, query, orderBy, getDoc, where, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 
-type Tab = 'overview' | 'transactions' | 'billing' | 'deposits' | 'devices' | 'settings' | 'admin-deposits' | 'admin-config' | 'admin-plans' | 'admin-users' | 'admin-devices' | 'admin-history';
+type Tab = 'overview' | 'transactions' | 'logs' | 'billing' | 'deposits' | 'devices' | 'settings' | 'admin-deposits' | 'admin-config' | 'admin-plans' | 'admin-users' | 'admin-devices' | 'admin-history';
 
 interface DashboardProps {
   user: User;
@@ -186,6 +187,7 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
   const navItems = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'transactions', label: 'History', icon: ListOrdered },
+    { id: 'logs', label: 'Incoming Logs', icon: Activity },
     { id: 'billing', label: 'Add Funds', icon: CreditCard },
     { id: 'deposits', label: 'My Deposits', icon: Wallet },
     { id: 'devices', label: 'Devices', icon: Smartphone },
@@ -503,10 +505,14 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
                 devices={devices} 
                 profile={profile} 
                 depositRequests={depositRequests}
+                rawSMS={rawSMS}
               />
             )}
             {activeTab === 'transactions' && (
               <TransactionsList transactions={transactions} depositRequests={depositRequests} rawSMS={rawSMS} />
+            )}
+            {activeTab === 'logs' && (
+              <UserAllLogs logs={rawSMS} loading={false} />
             )}
             {activeTab === 'billing' && (
               <Billing profile={profile} onUpgrade={() => setShowUpgradeModal(true)} />
@@ -527,7 +533,7 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
               <AdminAllDevices />
             )}
             {activeTab === 'admin-history' && isAdmin && (
-              <AdminAllTransactions />
+              <AdminAllLogs />
             )}
             {activeTab === 'admin-config' && isAdmin && (
               <AdminSystemConfig />

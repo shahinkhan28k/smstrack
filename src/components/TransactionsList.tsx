@@ -107,7 +107,11 @@ export default function TransactionsList({ transactions, depositRequests, rawSMS
                 </tr>
               ))}
               {transactions.length === 0 && (
-                <EmptyState icon={Clock} title="No Transactions" desc="Matching transactions will appear here automatically." />
+                <EmptyState 
+                  icon={Clock} 
+                  title="No Transactions Found" 
+                  desc="সফল ট্রানজেকশনগুলো এখানে দেখা যাবে। যদি আপনি মেসেজ পাঠিয়ে থাকেন কিন্তু এখানে না আসে, তবে 'Incoming Logs' ট্যাবটি চেক করুন।"
+                />
               )}
             </tbody>
           </table>

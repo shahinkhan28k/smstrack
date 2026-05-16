@@ -118,18 +118,19 @@ async function startServer() {
       const apiKey = (req.query.apiKey || req.body.apiKey || req.body.api_key || req.headers['x-api-key'])?.toString().trim();
       const apiSecret = (req.query.apiSecret || req.body.apiSecret || req.body.secret_key || req.headers['x-api-secret'])?.toString().trim();
       
-      // 2. Extract SMS Content
-      const message = (req.body.message || req.body.text || req.body.content || req.body.msg || req.body.SMS_MESSAGE)?.toString();
-      const sender = (req.body.sender || req.body.from || req.body.phone || req.body.SENDER_NUMBER)?.toString() || "Unknown";
-      const deviceId = (req.body.deviceId || req.body.device_id || req.body.DEVICE_ID || req.headers['x-device-id'])?.toString() || "unknown";
+      // 2. Extract SMS Content (Fallback to placeholders if missing)
+      const message = (req.body.message || req.body.text || req.body.content || req.body.msg || req.body.SMS_MESSAGE || req.body.body || "")?.toString();
+      const sender = (req.body.sender || req.body.from || req.body.phone || req.body.SENDER_NUMBER || req.body.address || "External App")?.toString();
+      const deviceId = (req.body.deviceId || req.body.device_id || req.body.DEVICE_ID || req.headers['x-device-id'] || "gateway_api")?.toString();
 
       console.log(`[SMS RECEIVE] From: ${sender}, Device: ${deviceId}, Msg: ${message?.substring(0, 50)}...`);
 
-      if (!apiKey || !apiSecret || !message) {
+      if (!apiKey || !apiSecret) {
         return res.status(400).json({ 
           status: false, 
-          message: "এপিআই কি, সিক্রেট কি এবং মেসেজ প্রয়োজন",
-          missing: !apiKey ? "apiKey" : (!apiSecret ? "apiSecret" : "message")
+          success: false,
+          message: "API Key এবং Secret Key প্রয়োজন",
+          error: "Auth keys missing"
         });
       }
 
@@ -139,29 +140,35 @@ async function startServer() {
       const userSnap = await getDocs(qUser);
       
       if (userSnap.empty) {
-        return res.status(401).json({ status: false, message: "ভুল এপিআই কি অথবা সিক্রেট কি ব্যবহার করা হয়েছে" });
+        return res.status(401).json({ 
+          status: false, 
+          success: false,
+          message: "ভুল এপিআই কি অথবা সিক্রেট কি ব্যবহার করা হয়েছে",
+          error: "Authentication failed"
+        });
       }
       
       const userId = userSnap.docs[0].id;
       const userData = userSnap.docs[0].data() as any;
 
-      // 4. Log Raw SMS immediately
+      // 4. Log Raw SMS immediately (Always log for debugging)
       const rawSmsRef = await addDoc(collection(db, 'raw_sms'), {
         userId,
         deviceId,
         sender,
-        message,
+        message: message || "Structured Data Received",
         timestamp: new Date().toISOString(),
-        status: 'received'
+        status: 'received',
+        originalBody: JSON.stringify(req.body) // Stored as string for Firestore
       });
 
       // 5. Extraction Logic (Prioritize structured data from request body)
-      let amount = parseFloat(req.body.amount || req.body.amount_tk || req.body.tk || "0");
-      let trxId = (req.body.trxId || req.body.transaction_id || req.body.txn_id || req.body.trx_id || "")?.toString();
-      let provider = (req.body.provider || req.body.method || req.body.type || "Unknown")?.toString();
+      let amount = parseFloat(req.body.amount || req.body.amount_tk || req.body.tk || req.body.value || "0");
+      let trxId = (req.body.trxId || req.body.transaction_id || req.body.txn_id || req.body.trx_id || req.body.txid || "")?.toString().toUpperCase();
+      let provider = (req.body.provider || req.body.method || req.body.type || req.body.gateway || "Unknown")?.toString();
 
       // If structured data is missing or incomplete, attempt regex extraction from message
-      if (amount <= 0 || !trxId || provider === "Unknown") {
+      if (message && (amount <= 0 || !trxId || provider === "Unknown")) {
         // Pattern definitions
         const bkashPattern = /You have received (?:Tk )?([\d,]+\.?\d*) from (\d+)\. .*TrxID ([A-Z0-9]+)/i;
         const nagadPattern = /Tk ([\d,]+\.?\d*) Received from (\d+)\. .*TxnID: ([A-Z0-9]+)/i;
@@ -208,53 +215,114 @@ async function startServer() {
 
       // 6. Save Transaction if valid amount/id found
       if (amount > 0 || trxId) {
+        // 6.1 Check for duplicate TrxID for this user
+        if (trxId) {
+          const qDup = query(
+            collection(db, 'transactions'), 
+            where('userId', '==', userId), 
+            where('trxId', '==', trxId),
+            limit(1)
+          );
+          const dupSnap = await getDocs(qDup);
+          if (!dupSnap.empty) {
+            console.log(`[SMS] Duplicate TrxID detected: ${trxId}`);
+            return res.status(200).json({ status: true, message: "Transaction already processed", isDuplicate: true });
+          }
+        }
+
         const txRef = await addDoc(collection(db, 'transactions'), txData);
         await updateDoc(doc(db, 'raw_sms', rawSmsRef.id), { status: 'processed', transactionId: txRef.id });
 
-        // 7. Matching Logic
+        // 7. Matching Logic (The "Smart Match" Engine)
         const depositRef = collection(db, 'depositRequests');
-        const qMatch = query(
-          depositRef, 
-          where('userId', '==', userId), 
-          where('amount', '==', amount), 
-          where('status', '==', 'pending')
-        );
         
-        const matchSnap = await getDocs(qMatch);
-        if (!matchSnap.empty) {
-          // Precise phone match if possible
-          const cleanSender = sender.slice(-10);
-          const matchedDoc = matchSnap.docs.find(doc => {
-            const data = doc.data() as any;
-            return !data.senderPhone || data.senderPhone.includes(cleanSender);
-          }) || matchSnap.docs[0];
+        // Priority 1: Match by TrxID if it exists in a pending request
+        let matchedDoc = null;
+        if (trxId) {
+          const qTrxMatch = query(
+            depositRef,
+            where('userId', '==', userId),
+            where('trxId', '==', trxId),
+            where('status', '==', 'pending'),
+            limit(1)
+          );
+          const trxMatchSnap = await getDocs(qTrxMatch);
+          if (!trxMatchSnap.empty) {
+            matchedDoc = trxMatchSnap.docs[0];
+            console.log(`[MATCH] Found by TrxID: ${trxId}`);
+          }
+        }
 
+        // Priority 2: Match by Amount + Phone if no TrxID match was found
+        if (!matchedDoc && amount > 0) {
+          const qAmountMatch = query(
+            depositRef, 
+            where('userId', '==', userId), 
+            where('amount', '==', amount), 
+            where('status', '==', 'pending')
+          );
+          
+          const amountMatchSnap = await getDocs(qAmountMatch);
+          if (!amountMatchSnap.empty) {
+            // Precise phone match if possible (last 10 digits to be safe)
+            const cleanSender = sender.slice(-10);
+            matchedDoc = amountMatchSnap.docs.find(doc => {
+              const data = doc.data() as any;
+              if (!data.senderPhone) return false; // Don't auto-match if no phone provided in request (too risky for same amount)
+              return data.senderPhone.includes(cleanSender);
+            }) || null;
+
+            // If still no match and only one pending request exists for this exact amount, match it as fallback
+            if (!matchedDoc && amountMatchSnap.size === 1) {
+              const singleData = amountMatchSnap.docs[0].data() as any;
+              // Only auto-match single if no phone was provided in the request
+              if (!singleData.senderPhone) {
+                matchedDoc = amountMatchSnap.docs[0];
+                console.log(`[MATCH] Found by unique amount: ${amount}`);
+              }
+            }
+          }
+        }
+
+        if (matchedDoc) {
           const depositData = matchedDoc.data() as any;
           await updateDoc(doc(db, 'depositRequests', matchedDoc.id), {
             status: 'matched',
             matchedTransactionId: txRef.id,
-            matchedAt: new Date().toISOString()
+            matchedAt: new Date().toISOString(),
+            // Ensure trxId is saved if it extracted from SMS but wasn't in request
+            trxId: depositData.trxId || trxId 
           });
 
-          // 8. Webhook Notification
+          // 8. Webhook Notification (Server-to-Server)
           const finalWebhookUrl = depositData.webhookUrl || userData.webhookUrl;
           if (finalWebhookUrl) {
+            console.log(`[WEBHOOK] Triggering for Request ${matchedDoc.id} to ${finalWebhookUrl}`);
             try {
+              const webhookPayload = {
+                event: 'payment.confirmed',
+                status: 'success',
+                requestId: matchedDoc.id,
+                externalId: depositData.externalId,
+                amount: amount,
+                trxId: trxId,
+                sender: sender,
+                provider: provider,
+                timestamp: new Date().toISOString(),
+                hash: "to_be_implemented" // In production, add a signing hash here
+              };
+
               await fetch(finalWebhookUrl, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  event: 'payment.confirmed',
-                  amount,
-                  trxId: txData.trxId,
-                  sender,
-                  provider,
-                  externalId: depositData.externalId,
-                  timestamp: new Date().toISOString()
-                })
+                headers: { 
+                  'Content-Type': 'application/json',
+                  'X-Gateway-Event': 'payment.confirmed',
+                  'X-API-Key': apiKey
+                },
+                body: JSON.stringify(webhookPayload)
               });
             } catch (err) {
-              console.error("Webhook Error:", err);
+              console.error("[WEBHOOK ERROR]:", err);
             }
           }
         }

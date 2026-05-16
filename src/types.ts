@@ -100,5 +100,6 @@ export interface RawSMS {
   sender: string;
   message: string;
   timestamp: string;
-  status: 'processed' | 'unprocessed';
+  status: 'received' | 'processed' | 'unprocessed';
+  transactionId?: string;
 }

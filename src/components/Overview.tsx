@@ -8,7 +8,7 @@ import {
   ArrowUpRight,
   CheckCircle2
 } from 'lucide-react';
-import { Transaction, Device, UserProfile, DepositRequest } from '../types';
+import { Transaction, Device, UserProfile, DepositRequest, RawSMS } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import { 
   BarChart, 
@@ -28,9 +28,10 @@ interface OverviewProps {
   devices: Device[];
   profile: UserProfile | null;
   depositRequests: DepositRequest[];
+  rawSMS?: RawSMS[];
 }
 
-export default function Overview({ transactions, devices, profile, depositRequests }: OverviewProps) {
+export default function Overview({ transactions, devices, profile, depositRequests, rawSMS = [] }: OverviewProps) {
   const totalVolume = transactions.reduce((sum, tx) => sum + tx.amount, 0);
   const activeDevices = devices.filter(d => d.status === 'online').length;
   const pendingRequests = depositRequests.filter(r => r.status === 'pending').length;
@@ -153,32 +154,74 @@ export default function Overview({ transactions, devices, profile, depositReques
 
         {/* Live Feed Miniature */}
         <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm flex flex-col">
-          <h3 className="text-lg font-bold text-gray-900 mb-6">Recent Activity</h3>
-          <div className="space-y-6 flex-1 overflow-y-auto max-h-[300px] pr-2">
-            {transactions.slice(0, 5).map((tx) => (
-              <div key={tx.id} className="flex gap-4">
-                <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center shrink-0">
-                  <span className="text-xs font-bold text-gray-500 uppercase">{tx.provider.charAt(0)}</span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-bold text-gray-900 truncate">{tx.sender}</div>
-                  <div className="text-xs text-gray-500 line-clamp-1">{tx.message}</div>
-                </div>
-                <div className="text-right">
-                  <div className="text-sm font-bold text-emerald-600">+{tx.amount}</div>
-                  <div className="text-[10px] text-gray-400 font-medium">{format(new Date(tx.createdAt), 'HH:mm')}</div>
-                </div>
-              </div>
-            ))}
-            {transactions.length === 0 && (
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-lg font-bold text-gray-900">Live Activity</h3>
+            <span className="flex items-center gap-1.5 px-2 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-black uppercase tracking-widest rounded-full">
+              <span className="w-1.5 h-1.5 bg-blue-600 rounded-full animate-pulse"></span> Live
+            </span>
+          </div>
+          
+          <div className="space-y-6 flex-1 overflow-y-auto max-h-[350px] pr-2">
+            {[...transactions, ...rawSMS.filter(s => !transactions.some(t => t.id === s.transactionId))]
+              .sort((a, b) => {
+                const timeA = 'timestamp' in a ? new Date(a.timestamp).getTime() : new Date(a.createdAt).getTime();
+                const timeB = 'timestamp' in b ? new Date(b.timestamp).getTime() : new Date(b.createdAt).getTime();
+                return timeB - timeA;
+              })
+              .slice(0, 10).map((activity) => {
+                const isTransaction = 'amount' in activity;
+                const activityTime = isTransaction 
+                  ? (activity as Transaction).createdAt 
+                  : (activity as RawSMS).timestamp;
+                const activityMsg = isTransaction 
+                  ? (activity as Transaction).message 
+                  : (activity as RawSMS).message;
+                const activitySender = isTransaction 
+                  ? (activity as Transaction).provider 
+                  : (activity as RawSMS).sender || "Unknown Sender";
+
+                return (
+                  <div key={activity.id} className="flex gap-4 group">
+                    <div className={cn(
+                      "w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-transform group-hover:scale-110",
+                      isTransaction ? "bg-emerald-50 text-emerald-600" : "bg-gray-50 text-gray-400"
+                    )}>
+                      {isTransaction ? <CheckCircle2 className="w-5 h-5" /> : <Smartphone className="w-5 h-5" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-bold text-gray-900 truncate">
+                        {activitySender}
+                      </div>
+                      <div className="text-[10px] text-gray-500 line-clamp-1 mt-0.5 leading-tight">
+                        {activityMsg}
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className={cn(
+                        "text-sm font-bold",
+                        isTransaction ? "text-emerald-600" : "text-gray-400 italic"
+                      )}>
+                        {isTransaction ? `+${(activity as Transaction).amount}` : 'Raw SMS'}
+                      </div>
+                      <div className="text-[9px] text-gray-400 font-bold mt-0.5">
+                        {format(new Date(activityTime), 'HH:mm:ss')}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            
+            {transactions.length === 0 && rawSMS.length === 0 && (
               <div className="text-center py-20 text-gray-400">
                 <Smartphone className="w-12 h-12 mx-auto mb-2 opacity-10" />
-                <p className="text-sm">No recent activity</p>
+                <p className="text-sm">No recent activity detected</p>
+                <p className="text-[10px] mt-2">Connecting a device will start the stream.</p>
               </div>
             )}
           </div>
-          <button className="mt-6 w-full py-3 text-sm font-bold text-gray-600 hover:bg-gray-50 rounded-xl transition-all border border-gray-100 italic">
-            See All Transactions
+          
+          <button className="mt-6 w-full py-3 text-sm font-bold text-blue-600 hover:bg-blue-50 rounded-xl transition-all border border-blue-100 border-dashed">
+            View All Logs
           </button>
         </div>
       </div>

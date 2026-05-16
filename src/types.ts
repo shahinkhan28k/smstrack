@@ -77,6 +77,9 @@ export interface SystemConfig {
   bkashNumber: string;
   nagadNumber: string;
   rocketNumber: string;
+  appVersion?: string;
+  isMaintenance?: boolean;
+  announcement?: string;
   updatedAt?: string;
 }
 
@@ -88,4 +91,14 @@ export interface PlanDefinition {
   badge?: string;
   isPopular?: boolean;
   order?: number;
+}
+
+export interface RawSMS {
+  id: string;
+  userId: string;
+  deviceId: string;
+  sender: string;
+  message: string;
+  timestamp: string;
+  status: 'processed' | 'unprocessed';
 }

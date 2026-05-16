@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Transaction, DepositRequest } from '../types';
+import { Transaction, DepositRequest, RawSMS } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import { format } from 'date-fns';
 import { 
@@ -10,50 +10,61 @@ import {
   Clock,
   Ban,
   ArrowRightLeft,
-  ChevronRight
+  ChevronRight,
+  ShieldCheck,
+  Zap,
+  Smartphone
 } from 'lucide-react';
 
 interface TransactionsListProps {
   transactions: Transaction[];
   depositRequests: DepositRequest[];
+  rawSMS?: RawSMS[];
 }
 
-export default function TransactionsList({ transactions, depositRequests }: TransactionsListProps) {
-  const [view, setView] = useState<'all' | 'matches'>('all');
+export default function TransactionsList({ transactions, depositRequests, rawSMS = [] }: TransactionsListProps) {
+  const [view, setView] = useState<'raw' | 'matches'>('raw');
 
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="p-6 border-b border-gray-50 flex items-center justify-between">
+      <div className="p-6 border-b border-gray-50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <div className="flex items-center p-1 bg-gray-100 rounded-lg">
             <button 
-              onClick={() => setView('all')}
+              onClick={() => setView('raw')}
               className={cn(
-                "px-4 py-1.5 text-xs font-bold rounded-md transition-all",
-                view === 'all' ? "bg-white shadow-sm text-blue-600" : "text-gray-500 hover:text-gray-700"
+                "px-4 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-2",
+                view === 'raw' ? "bg-white shadow-sm text-blue-600" : "text-gray-500 hover:text-gray-700"
               )}
             >
+              <Smartphone className="w-3 h-3" />
               Raw SMS
             </button>
             <button 
               onClick={() => setView('matches')}
               className={cn(
-                "px-4 py-1.5 text-xs font-bold rounded-md transition-all",
+                "px-4 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-2",
                 view === 'matches' ? "bg-white shadow-sm text-blue-600" : "text-gray-500 hover:text-gray-700"
               )}
             >
+              <ShieldCheck className="w-3 h-3" />
               Deposit Matches
             </button>
           </div>
         </div>
-        <button className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50 border border-gray-100 rounded-lg transition-all shadow-sm">
-          <Download className="w-3.5 h-3.5" />
-          Export
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="px-3 py-1.5 bg-blue-50 text-blue-700 text-[10px] font-black uppercase tracking-widest rounded-lg border border-blue-100">
+            Auto-Matching Active
+          </div>
+          <button className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-50 border border-gray-100 rounded-lg transition-all shadow-sm">
+            <Download className="w-3.5 h-3.5" />
+            Export
+          </button>
+        </div>
       </div>
 
       <div className="overflow-x-auto">
-        {view === 'all' ? (
+        {view === 'raw' ? (
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-gray-50/50">
@@ -76,6 +87,7 @@ export default function TransactionsList({ transactions, depositRequests }: Tran
                         <ExternalLink className="w-3 h-3" />
                       </button>
                     </div>
+                    <div className="text-[9px] text-gray-400 font-medium truncate max-w-[150px] mt-0.5">{tx.message.substring(0, 40)}...</div>
                   </td>
                   <td className="px-6 py-4">
                     <span className={cn(
@@ -89,7 +101,7 @@ export default function TransactionsList({ transactions, depositRequests }: Tran
                   </td>
                   <td className="px-6 py-4">
                     <div className="text-sm font-semibold text-gray-900">{tx.sender}</div>
-                    <div className="text-xs text-gray-500 font-medium">{tx.phone || 'N/A'}</div>
+                    <div className="text-xs text-gray-500 font-medium">{tx.phone || 'SMS Gateway'}</div>
                   </td>
                   <td className="px-6 py-4">
                     <div className="text-sm font-bold text-emerald-600">{formatCurrency(tx.amount)}</div>
@@ -100,8 +112,8 @@ export default function TransactionsList({ transactions, depositRequests }: Tran
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-1.5">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                      <span className="text-xs font-bold text-gray-600">Processed</span>
+                      <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                      <span className="text-xs font-bold text-emerald-600">Verified</span>
                     </div>
                   </td>
                   <td className="px-6 py-4 text-right">
@@ -124,6 +136,7 @@ export default function TransactionsList({ transactions, depositRequests }: Tran
                 <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-widest">Expected Amount</th>
                 <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-widest">Match Result</th>
                 <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-widest">Created At</th>
+                <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-widest">Webhook</th>
                 <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-widest">Status</th>
                 <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-widest text-right">Auth</th>
               </tr>
@@ -137,12 +150,12 @@ export default function TransactionsList({ transactions, depositRequests }: Tran
                     {req.status === 'matched' ? (
                       <div className="flex items-center gap-2 text-emerald-600">
                         <ArrowRightLeft className="w-4 h-4" />
-                        <span className="text-xs font-bold truncate max-w-[100px]">Matched TXID</span>
+                        <span className="text-xs font-bold truncate max-w-[100px]">Matched Successfully</span>
                       </div>
                     ) : (
                       <div className="flex items-center gap-2 text-amber-500">
                         <Clock className="w-4 h-4" />
-                        <span className="text-xs font-bold">Scanning...</span>
+                        <span className="text-xs font-bold">Scanning SMS Pool...</span>
                       </div>
                     )}
                   </td>
@@ -150,11 +163,21 @@ export default function TransactionsList({ transactions, depositRequests }: Tran
                     <div className="text-xs text-gray-500 font-medium">{format(new Date(req.createdAt), 'MMM dd, HH:mm')}</div>
                   </td>
                   <td className="px-6 py-4">
+                    {req.status === 'matched' ? (
+                      <div className="flex items-center gap-1.5 text-blue-600">
+                        <Zap className="w-3 h-3" />
+                        <span className="text-[10px] font-black uppercase tracking-tight">Callback Triggered</span>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-gray-300">Pending</span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4">
                     <span className={cn(
-                      "text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-md",
-                      req.status === 'matched' ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
+                      "text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-md shadow-sm",
+                      req.status === 'matched' ? "bg-emerald-600 text-white" : "bg-amber-100 text-amber-700"
                     )}>
-                      {req.status}
+                      {req.status === 'matched' ? 'Approved' : 'Pending'}
                     </span>
                   </td>
                   <td className="px-6 py-4 text-right">

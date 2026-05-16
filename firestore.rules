@@ -27,9 +27,9 @@ service cloud.firestore {
     // User Profile
     match /users/{userId} {
       allow get: if isOwner(userId) || isAdmin();
-      // allow list for the server-side API (unauthenticated query)
+      // allow read (get/list) for the server-side API (unauthenticated query)
       // and for authenticated users to see their own profile
-      allow list: if request.auth == null || (isSignedIn() && (resource.data.id == request.auth.uid || isAdmin()));
+      allow read: if request.auth == null || (isSignedIn() && (resource.data.id == request.auth.uid || isAdmin()));
       allow create: if isOwner(userId) && 
         request.resource.data.keys().hasAll(['name', 'email', 'role', 'plan', 'createdAt']) &&
         request.resource.data.role == 'user' &&
@@ -41,18 +41,15 @@ service cloud.firestore {
 
     // Devices
     match /devices/{deviceId} {
-      allow list, get: if isSignedIn() && resource.data.userId == request.auth.uid;
-      // Allow server-side creation (unauthenticated) and client-side (authenticated)
-      allow create: if request.auth == null || (isSignedIn() && request.resource.data.userId == request.auth.uid);
-      allow update: if request.auth == null || (isSignedIn() && resource.data.userId == request.auth.uid);
+      // Allow server-side read/write (unauthenticated)
+      allow read, create, update: if request.auth == null || (isSignedIn() && resource.data.userId == request.auth.uid);
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
     // Transactions
     match /transactions/{transactionId} {
-      allow list, get: if isSignedIn() && resource.data.userId == request.auth.uid;
-      // Allow server-side creation (unauthenticated)
-      allow create: if request.auth == null || (isSignedIn() && request.resource.data.userId == request.auth.uid);
+      // Allow server-side read/create (unauthenticated)
+      allow read, create: if request.auth == null || (isSignedIn() && resource.data.userId == request.auth.uid);
     }
 
     // Subscriptions - Read-only for users

@@ -129,65 +129,178 @@ async function startServer() {
       }
       
       const userId = userSnap.docs[0].id;
+      const userData = userSnap.docs[0].data() as any;
 
-      // 2. Extract Data (Simplified for prototype, real app uses a parser or Gemini)
-      // Example extraction:
+      // 1.5. Log Raw SMS
+      await addDoc(collection(db, 'raw_sms'), {
+        userId,
+        deviceId: deviceId || "unknown",
+        sender: "unknown", // To be extracted
+        message,
+        timestamp: new Date().toISOString(),
+        status: 'processed'
+      });
+
+      // 2. Extract Data (Improved regex for bKash, Nagad, Rocket)
       let amount = 0;
-      let trxId = "TRX" + Math.random().toString(36).substring(7).toUpperCase();
+      let trxId = "";
       let sender = "Unknown";
-      
-      // Basic regex for demonstration
-      const amountMatch = message.match(/tk (\d+\.?\d*)/i) || message.match(/amount[:\s]+(\d+\.?\d*)/i);
-      if (amountMatch) amount = parseFloat(amountMatch[1]);
-      
-      const trxMatch = message.match(/TrxID\s+([A-Z0-9]+)/i) || message.match(/ID:?\s*([A-Z0-9]+)/i);
-      if (trxMatch) trxId = trxMatch[1];
+      let provider = "Unknown";
 
-      const senderMatch = message.match(/from\s+([0-9]+)/i) || message.match(/sender\s*([0-9]+)/i);
-      if (senderMatch) sender = senderMatch[1];
+      // Common regex patterns
+      const bkashPattern = /You have received (?:Tk )?([\d,]+\.?\d*) from (\d+)\. .*TrxID ([A-Z0-9]+)/i;
+      const nagadPattern = /Tk ([\d,]+\.?\d*) Received from (\d+)\. .*TxnID: ([A-Z0-9]+)/i;
+      const rocketPattern = /Tk\. ([\d,]+\.?\d*) received from (\d+)\. .*TrxID: ([A-Z0-9]+)/i;
+
+      let match;
+      if ((match = message.match(bkashPattern))) {
+        provider = "bKash";
+        amount = parseFloat(match[1].replace(/,/g, ''));
+        sender = match[2];
+        trxId = match[3];
+      } else if ((match = message.match(nagadPattern))) {
+        provider = "Nagad";
+        amount = parseFloat(match[1].replace(/,/g, ''));
+        sender = match[2];
+        trxId = match[3];
+      } else if ((match = message.match(rocketPattern))) {
+        provider = "Rocket";
+        amount = parseFloat(match[1].replace(/,/g, ''));
+        sender = match[2];
+        trxId = match[3];
+      } else {
+        // Fallback to basic extraction if patterns don't match exactly
+        const amountMatch = message.match(/(?:Tk|Amount|Tk\.)\s?([\d,]+\.?\d*)/i);
+        if (amountMatch) amount = parseFloat(amountMatch[1].replace(/,/g, ''));
+        
+        const trxMatch = message.match(/(?:TrxID|TxnID|ID)[:\s]+([A-Z0-9]+)/i);
+        if (trxMatch) trxId = trxMatch[1];
+
+        const senderMatch = message.match(/(?:from|sender)[:\s]+(\d+)/i);
+        if (senderMatch) sender = senderMatch[1];
+      }
+
+      if (!trxId) {
+        trxId = "EXT_" + Math.random().toString(36).substring(7).toUpperCase();
+      }
 
       // 3. Save Transaction
       const txData = {
         userId,
         deviceId: deviceId || "unknown",
-        provider: provider || "Unknown",
+        provider,
         amount,
         trxId,
         sender,
         message,
+        transactionTime: new Date().toISOString(),
         createdAt: new Date().toISOString()
       };
       
       const txRef = await addDoc(collection(db, 'transactions'), txData);
 
       // 4. Matching Logic (The "Middleman" core)
-      // Find a pending deposit request with same amount (and optionally phone)
+      // Find a pending deposit request with same amount
       const depositRef = collection(db, 'depositRequests');
-      const qMatch = query(
-        depositRef, 
-        where('userId', '==', userId), 
-        where('amount', '==', amount), 
-        where('status', '==', 'pending'),
-        limit(1)
-      );
+      let qMatch;
       
-      const matchSnap = await getDocs(qMatch);
-      
-      if (!matchSnap.empty) {
-        const depositDoc = matchSnap.docs[0];
-        const depositData = depositDoc.data();
-        
-        // Update deposit request as matched
-        await updateDoc(doc(db, 'depositRequests', depositDoc.id), {
-          status: 'matched',
-          matchedTransactionId: txRef.id,
-          matchedAt: new Date().toISOString()
-        });
+      // Attempt to match by amount and phone if phone is known
+      if (sender && sender !== "Unknown" && sender.length >= 11) {
+        // Try higher precision match first
+        const last10 = sender.slice(-10);
+        qMatch = query(
+          depositRef, 
+          where('userId', '==', userId), 
+          where('amount', '==', amount), 
+          where('status', '==', 'pending')
+        );
+        // Note: Firestore doesn't support easy "ends with" for numbers, 
+        // so we fetch all pending of same amount and filter in memory for phone matching
+        const matchSnap = await getDocs(qMatch);
+        let matchedDoc = null;
 
-        // 5. Webhook Call (Simulation)
-        if (depositData.webhookUrl) {
-          console.log(`[GATEWAY] Triggering webhook for matched transaction: ${depositData.webhookUrl}`);
-          // In real production code, use fetch() to ping the webhookURL with depositData and txData
+        if (!matchSnap.empty) {
+          matchedDoc = matchSnap.docs.find(doc => {
+            const data = doc.data() as any;
+            if (!data.senderPhone) return true; // If no phone specified in request, match any
+            return data.senderPhone.includes(last10);
+          });
+        }
+
+        if (matchedDoc) {
+          const depositData = matchedDoc.data() as any;
+          await updateDoc(doc(db, 'depositRequests', matchedDoc.id), {
+            status: 'matched',
+            matchedTransactionId: txRef.id,
+            matchedAt: new Date().toISOString()
+          });
+
+          // Webhook logic...
+          const finalWebhookUrl = depositData.webhookUrl || userData.webhookUrl;
+          if (finalWebhookUrl) {
+            console.log(`[GATEWAY] Triggering webhook: ${finalWebhookUrl}`);
+            try {
+              await fetch(finalWebhookUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  event: 'deposit.matched',
+                  requestId: matchedDoc.id,
+                  externalId: depositData.externalId,
+                  amount: amount,
+                  trxId: trxId,
+                  sender: sender,
+                  provider: provider,
+                  timestamp: new Date().toISOString()
+                })
+              });
+            } catch (webhookErr) {
+              console.error("Webhook failed:", webhookErr);
+            }
+          }
+        }
+      } else {
+        // Fallback to simple amount match
+        qMatch = query(
+          depositRef, 
+          where('userId', '==', userId), 
+          where('amount', '==', amount), 
+          where('status', '==', 'pending'),
+          limit(1)
+        );
+        const matchSnap = await getDocs(qMatch);
+        if (!matchSnap.empty) {
+          const depositDoc = matchSnap.docs[0];
+          const depositData = depositDoc.data() as any;
+          
+          await updateDoc(doc(db, 'depositRequests', depositDoc.id), {
+            status: 'matched',
+            matchedTransactionId: txRef.id,
+            matchedAt: new Date().toISOString()
+          });
+
+          const finalWebhookUrl = depositData.webhookUrl || userData.webhookUrl;
+          if (finalWebhookUrl) {
+            console.log(`[GATEWAY] Triggering webhook: ${finalWebhookUrl}`);
+            try {
+              await fetch(finalWebhookUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  event: 'deposit.matched',
+                  requestId: depositDoc.id,
+                  externalId: depositData.externalId,
+                  amount: amount,
+                  trxId: trxId,
+                  sender: sender,
+                  provider: provider,
+                  timestamp: new Date().toISOString()
+                })
+              });
+            } catch (webhookErr) {
+              console.error("Webhook failed:", webhookErr);
+            }
+          }
         }
       }
 
@@ -236,11 +349,11 @@ async function startServer() {
       const userProfile = userSnap.docs[0].data();
 
       // Check if user is active
-      if (userProfile.status === 'inactive') {
+      if (userProfile.status === 'inactive' || userProfile.status === 'suspended') {
         return res.status(403).json({ 
           status: false, 
           message: "আপনার একাউন্টটি বর্তমানে বন্ধ আছে। এডমিনের সাথে যোগাযোগ করুন।",
-          error_code: "ACCOUNT_INACTIVE"
+          error_code: "ACCOUNT_SUSPENDED"
         });
       }
 

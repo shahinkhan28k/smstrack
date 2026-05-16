@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, getDoc } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, doc, updateDoc, getDoc, addDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { UserDeposit, UserProfile } from '../types';
 import { Check, X, Clock, User, CreditCard, ExternalLink, Loader2, Search } from 'lucide-react';
@@ -58,6 +58,44 @@ export default function AdminDeposits() {
     d.userId?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const [manualAmount, setManualAmount] = useState('');
+  const [manualUserId, setManualUserId] = useState('');
+  const [addingFund, setAddingFund] = useState(false);
+
+  const handleManualAdd = async () => {
+    if (!manualUserId || !manualAmount) return;
+    setAddingFund(true);
+    try {
+      const userRef = doc(db, 'users', manualUserId);
+      const userSnap = await getDoc(userRef);
+      if (!userSnap.exists()) {
+        alert("User not found!");
+        return;
+      }
+      const userData = userSnap.data();
+      const nextBalance = (userData.balance || 0) + Number(manualAmount);
+      await updateDoc(userRef, { balance: nextBalance });
+      
+      // Log as transaction
+      await addDoc(collection(db, 'transactions'), {
+        userId: manualUserId,
+        amount: Number(manualAmount),
+        type: 'credit',
+        description: 'Admin Manual Credit',
+        timestamp: new Date().toISOString()
+      });
+
+      alert("Fund added successfully!");
+      setManualAmount('');
+      setManualUserId('');
+    } catch (e) {
+      console.error(e);
+      alert("Failed to add fund");
+    } finally {
+      setAddingFund(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -68,8 +106,42 @@ export default function AdminDeposits() {
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      {/* Quick Add Fund */}
+      <div className="bg-emerald-600 rounded-2xl p-6 text-white shadow-xl shadow-emerald-100 flex flex-col md:flex-row md:items-end gap-4">
+        <div className="flex-1 space-y-2">
+          <label className="text-[10px] font-black uppercase tracking-widest text-emerald-100">User ID to Credit</label>
+          <input 
+            type="text" 
+            value={manualUserId}
+            onChange={(e) => setManualUserId(e.target.value)}
+            placeholder="Enter User Firebase ID"
+            className="w-full h-11 px-4 bg-emerald-700/50 border border-emerald-500/50 rounded-xl text-white placeholder:text-emerald-300 text-sm outline-none focus:ring-2 focus:ring-white/20"
+          />
+        </div>
+        <div className="w-full md:w-48 space-y-2">
+          <label className="text-[10px] font-black uppercase tracking-widest text-emerald-100">Amount (TK)</label>
+          <input 
+            type="number" 
+            value={manualAmount}
+            onChange={(e) => setManualAmount(e.target.value)}
+            placeholder="0.00"
+            className="w-full h-11 px-4 bg-emerald-700/50 border border-emerald-500/50 rounded-xl text-white placeholder:text-emerald-300 text-sm outline-none focus:ring-2 focus:ring-white/20"
+          />
+        </div>
+        <button 
+          onClick={handleManualAdd}
+          disabled={addingFund || !manualUserId || !manualAmount}
+          className="h-11 px-8 bg-white text-emerald-600 font-black text-xs uppercase tracking-widest rounded-xl hover:bg-emerald-50 transition-all disabled:opacity-50"
+        >
+          {addingFund ? 'Processing...' : 'Direct Add Fund'}
+        </button>
+      </div>
+
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <h3 className="text-xl font-bold text-gray-900">Deposit Management (ডিপোজিট ম্যানেজমেন্ট)</h3>
+        <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+          <Clock className="w-5 h-5 text-blue-600" />
+          Deposit Requests
+        </h3>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input 

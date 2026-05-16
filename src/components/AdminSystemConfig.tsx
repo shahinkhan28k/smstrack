@@ -3,6 +3,7 @@ import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { SystemConfig } from '../types';
 import { Save, Loader2, CreditCard, ShieldCheck } from 'lucide-react';
+import { cn } from '../lib/utils';
 
 export default function AdminSystemConfig() {
   const [loading, setLoading] = useState(true);
@@ -10,7 +11,10 @@ export default function AdminSystemConfig() {
   const [config, setConfig] = useState<SystemConfig>({
     bkashNumber: '',
     nagadNumber: '',
-    rocketNumber: ''
+    rocketNumber: '',
+    appVersion: '1.0.0',
+    isMaintenance: false,
+    announcement: ''
   });
 
   useEffect(() => {
@@ -99,6 +103,46 @@ export default function AdminSystemConfig() {
               onChange={(e) => setConfig({ ...config, rocketNumber: e.target.value })}
               placeholder="019XXXXXXXX"
               className="w-full h-14 px-5 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-purple-700 focus:bg-white outline-none transition-all text-lg font-bold text-gray-900"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-6 pt-4 border-t border-gray-100">
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">App Version</label>
+              <input 
+                type="text" 
+                value={config.appVersion}
+                onChange={(e) => setConfig({ ...config, appVersion: e.target.value })}
+                className="w-full h-12 px-4 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-blue-500 focus:bg-white outline-none transition-all text-sm font-bold"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Maintenance Mode</label>
+              <div className="flex items-center gap-3 h-12 px-4 bg-gray-50 border border-gray-100 rounded-xl">
+                <button 
+                  onClick={() => setConfig({...config, isMaintenance: !config.isMaintenance})}
+                  className={cn(
+                    "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden",
+                    config.isMaintenance ? "bg-red-600" : "bg-gray-200"
+                  )}
+                >
+                  <span className={cn(
+                    "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out",
+                    config.isMaintenance ? "translate-x-5" : "translate-x-0"
+                  )} />
+                </button>
+                <span className="text-xs font-bold text-gray-600">{config.isMaintenance ? 'ON' : 'OFF'}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Global Announcement (ড্যাশবোর্ড এনাউন্সমেন্ট)</label>
+            <textarea 
+              value={config.announcement}
+              onChange={(e) => setConfig({ ...config, announcement: e.target.value })}
+              placeholder="Enter message for all users..."
+              className="w-full h-24 p-4 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-blue-500 focus:bg-white outline-none transition-all text-sm font-medium resize-none"
             />
           </div>
 

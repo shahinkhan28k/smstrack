@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User } from 'firebase/auth';
-import { UserProfile, Transaction, Device, DepositRequest, PlanDefinition } from '../types';
+import { UserProfile, Transaction, Device, DepositRequest, PlanDefinition, SystemConfig, RawSMS } from '../types';
 import { transactionService, deviceService, depositService } from '../lib/services';
 import Overview from './Overview';
 import TransactionsList from './TransactionsList';
@@ -11,6 +11,9 @@ import MyDeposits from './MyDeposits';
 import AdminDeposits from './AdminDeposits';
 import AdminSystemConfig from './AdminSystemConfig';
 import AdminPlans from './AdminPlans';
+import AdminUsers from './AdminUsers';
+import AdminAllDevices from './AdminAllDevices';
+import AdminAllTransactions from './AdminAllTransactions';
 import { cn, generateApiKey } from '../lib/utils';
 import { 
   LayoutDashboard, 
@@ -29,12 +32,15 @@ import {
   QrCode,
   Wallet,
   Globe,
-  Zap
+  Zap,
+  Users,
+  History,
+  Activity
 } from 'lucide-react';
-import { collection, addDoc, updateDoc, doc, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, doc, onSnapshot, query, orderBy, getDoc, where, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 
-type Tab = 'overview' | 'transactions' | 'billing' | 'deposits' | 'devices' | 'settings' | 'admin-deposits' | 'admin-config' | 'admin-plans';
+type Tab = 'overview' | 'transactions' | 'billing' | 'deposits' | 'devices' | 'settings' | 'admin-deposits' | 'admin-config' | 'admin-plans' | 'admin-users' | 'admin-devices' | 'admin-history';
 
 interface DashboardProps {
   user: User;
@@ -48,6 +54,30 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [depositRequests, setDepositRequests] = useState<DepositRequest[]>([]);
+  const [rawSMS, setRawSMS] = useState<RawSMS[]>([]);
+  const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null);
+
+  useEffect(() => {
+    if (!profile) return;
+    const unsub = onSnapshot(query(collection(db, 'raw_sms'), where('userId', '==', profile.id), orderBy('timestamp', 'desc'), limit(50)), (snap) => {
+      setRawSMS(snap.docs.map(d => ({ id: d.id, ...d.data() } as RawSMS)));
+    });
+    return unsub;
+  }, [profile]);
+
+  useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const snap = await getDoc(doc(db, 'system', 'config'));
+        if (snap.exists()) {
+          setSystemConfig(snap.data() as SystemConfig);
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
+    fetchConfig();
+  }, []);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
   const [newDeviceName, setNewDeviceName] = useState('');
@@ -130,9 +160,12 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
   ] as const;
 
   const adminNavItems = [
-    { id: 'admin-deposits', label: 'Deposits', icon: Wallet },
-    { id: 'admin-config', label: 'App Config', icon: Globe },
-    { id: 'admin-plans', label: 'Manage Plans', icon: Zap },
+    { id: 'admin-users', label: 'All Users', icon: Users },
+    { id: 'admin-deposits', label: 'Add Fund', icon: Wallet },
+    { id: 'admin-plans', label: 'Plan', icon: Zap },
+    { id: 'admin-devices', label: 'Device Setting', icon: Smartphone },
+    { id: 'admin-history', label: 'History', icon: History },
+    { id: 'admin-config', label: 'Update Now', icon: Globe },
   ] as const;
 
   return (
@@ -250,6 +283,15 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
           </div>
 
           <div className="flex items-center gap-3 sm:gap-6">
+            {profile?.role === 'admin' && (
+              <button 
+                onClick={() => setActiveTab('admin-users')}
+                className="hidden md:flex items-center gap-2 px-4 py-1.5 bg-purple-600 text-white rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-purple-700 transition-all shadow-lg shadow-purple-200"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                Admin Panel
+              </button>
+            )}
             <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 bg-emerald-50 text-emerald-700 rounded-full border border-emerald-100">
               <Wallet className="w-4 h-4 shrink-0" />
               <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider">Balance: {profile?.balance || 0} TK</span>
@@ -275,10 +317,20 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
               </button>
 
               {showProfileMenu && (
-                <div className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-50 animate-in fade-in zoom-in-95 duration-100">
+                <div className="absolute right-0 mt-2 w-52 bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-50 animate-in fade-in zoom-in-95 duration-100">
                   <div className="px-4 py-2 border-b border-gray-50 mb-1">
                     <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Account</p>
                   </div>
+                  
+                  {profile?.role === 'admin' && (
+                    <button 
+                      onClick={() => { setActiveTab('admin-users'); setShowProfileMenu(false); }} 
+                      className="w-full text-left px-4 py-2.5 text-sm font-bold text-purple-600 hover:bg-purple-50 flex items-center gap-2 transition-colors"
+                    >
+                      <ShieldCheck className="w-4 h-4" /> Admin Panel
+                    </button>
+                  )}
+
                   <button onClick={() => { setActiveTab('settings'); setShowProfileMenu(false); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
                     <UserIcon className="w-4 h-4" /> Profile Details
                   </button>
@@ -301,6 +353,21 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-8">
           <div className="max-w-6xl mx-auto space-y-6 sm:space-y-8">
+            
+            {activeTab === 'overview' && systemConfig?.announcement && (
+              <div className="bg-blue-600 text-white px-6 py-4 rounded-2xl shadow-lg shadow-blue-100 flex items-center justify-between gap-4 animate-in fade-in slide-in-from-top-4 duration-500">
+                <div className="flex items-center gap-3">
+                  <div className="bg-white/20 p-2 rounded-lg">
+                    <Globe className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-black uppercase tracking-widest text-blue-200">System Announcement</div>
+                    <div className="text-sm font-bold leading-tight">{systemConfig.announcement}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <h2 className="text-xl sm:text-2xl font-bold text-gray-900 leading-tight">
@@ -310,9 +377,12 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
                   {activeTab === 'deposits' && 'My Deposits'}
                   {activeTab === 'devices' && 'Connected Devices'}
                   {activeTab === 'settings' && 'Account Settings'}
-                  {activeTab === 'admin-deposits' && 'Deposit Management'}
-                  {activeTab === 'admin-config' && 'App Configuration'}
-                  {activeTab === 'admin-plans' && 'Plan Management'}
+                  {activeTab === 'admin-deposits' && 'Fund Management'}
+                  {activeTab === 'admin-config' && 'System Configuration'}
+                  {activeTab === 'admin-plans' && 'Subscription Plans'}
+                  {activeTab === 'admin-users' && 'User Management'}
+                  {activeTab === 'admin-devices' && 'All Device Settings'}
+                  {activeTab === 'admin-history' && 'Platform History'}
                 </h2>
                 <p className="text-gray-500 text-sm mt-1">
                   {activeTab === 'overview' && 'View your revenue and growth trends.'}
@@ -324,8 +394,21 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
                   {activeTab === 'admin-deposits' && 'Approve or reject user deposit requests.'}
                   {activeTab === 'admin-config' && 'Update payment numbers and system settings.'}
                   {activeTab === 'admin-plans' && 'Add, edit or remove subscription plans.'}
+                  {activeTab === 'admin-users' && 'Manage user accounts and status.'}
+                  {activeTab === 'admin-devices' && 'Monitor and manage all active gateway devices.'}
+                  {activeTab === 'admin-history' && 'Track all transactions and activities.'}
                 </p>
               </div>
+
+              {activeTab.startsWith('admin-') && (
+                <button 
+                  onClick={() => setActiveTab('overview')}
+                  className="flex items-center justify-center gap-2 px-6 py-2.5 bg-gray-900 shadow-xl shadow-gray-200 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:-translate-y-0.5 transition-all w-full sm:w-auto"
+                >
+                  <LayoutDashboard className="w-4 h-4" />
+                  Exit Admin Panel
+                </button>
+              )}
               
               {activeTab === 'devices' && (
                 <button 
@@ -347,7 +430,7 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
               />
             )}
             {activeTab === 'transactions' && (
-              <TransactionsList transactions={transactions} depositRequests={depositRequests} />
+              <TransactionsList transactions={transactions} depositRequests={depositRequests} rawSMS={rawSMS} />
             )}
             {activeTab === 'billing' && (
               <Billing profile={profile} onUpgrade={() => setShowUpgradeModal(true)} />
@@ -360,6 +443,15 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
             )}
             {activeTab === 'admin-plans' && profile?.role === 'admin' && (
               <AdminPlans />
+            )}
+            {activeTab === 'admin-users' && profile?.role === 'admin' && (
+              <AdminUsers />
+            )}
+            {activeTab === 'admin-devices' && profile?.role === 'admin' && (
+              <AdminAllDevices />
+            )}
+            {activeTab === 'admin-history' && profile?.role === 'admin' && (
+              <AdminAllTransactions />
             )}
             {activeTab === 'admin-config' && profile?.role === 'admin' && (
               <AdminSystemConfig />

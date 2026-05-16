@@ -22,7 +22,7 @@ export default function AdminUsers() {
   }, []);
 
   const toggleStatus = async (userId: string, currentStatus: string) => {
-    const nextStatus = currentStatus === 'active' ? 'suspended' : 'active';
+    const nextStatus = (currentStatus === 'suspended' || currentStatus === 'inactive') ? 'active' : 'suspended';
     if (!confirm(`Are you sure you want to change user status to ${nextStatus}?`)) return;
     
     setProcessingId(userId);
@@ -31,6 +31,20 @@ export default function AdminUsers() {
     } catch (e) {
       console.error(e);
       alert("Status update failed");
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const updateRole = async (userId: string, newRole: string) => {
+    if (!confirm(`Are you sure you want to change user role to ${newRole}?`)) return;
+    
+    setProcessingId(userId);
+    try {
+      await updateDoc(doc(db, 'users', userId), { role: newRole });
+    } catch (e) {
+      console.error(e);
+      alert("Role update failed");
     } finally {
       setProcessingId(null);
     }
@@ -52,6 +66,52 @@ export default function AdminUsers() {
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      {/* Quick Access Control */}
+      <div className="bg-purple-600 rounded-2xl p-6 text-white shadow-xl shadow-purple-100 flex flex-col md:flex-row md:items-end gap-4">
+        <div className="flex-1 space-y-2">
+          <label className="text-[10px] font-black uppercase tracking-widest text-purple-100">User Identification (UID/Email)</label>
+          <input 
+            type="text" 
+            id="quick-uid"
+            placeholder="Search by ID or Email..."
+            className="w-full h-11 px-4 bg-purple-700/50 border border-purple-500/50 rounded-xl text-white placeholder:text-purple-300 text-sm outline-none focus:ring-2 focus:ring-white/20"
+          />
+        </div>
+        <div className="w-full md:w-48 space-y-2">
+          <label className="text-[10px] font-black uppercase tracking-widest text-purple-100">Target Level</label>
+          <select 
+            id="quick-role"
+            className="w-full h-11 px-4 bg-purple-700/50 border border-purple-500/50 rounded-xl text-white text-sm outline-none focus:ring-2 focus:ring-white/20"
+          >
+            <option value="user">Standard User</option>
+            <option value="moderator">Moderator</option>
+            <option value="admin">Administrator</option>
+          </select>
+        </div>
+        <button 
+          onClick={async () => {
+            const input = document.getElementById('quick-uid') as HTMLInputElement;
+            const roleSelect = document.getElementById('quick-role') as HTMLSelectElement;
+            const target = input.value.trim();
+            const role = roleSelect.value;
+            
+            if (!target) return;
+
+            // Find user by email or ID in the current list
+            const foundUser = users.find(u => u.id === target || u.email === target);
+            if (foundUser) {
+              await updateRole(foundUser.id, role);
+              input.value = '';
+            } else {
+              alert("User not found in currently loaded list. Please use the exact User ID.");
+            }
+          }}
+          className="h-11 px-8 bg-white text-purple-600 font-black text-xs uppercase tracking-widest rounded-xl hover:bg-purple-50 transition-all shadow-sm"
+        >
+          Assign Now
+        </button>
+      </div>
+
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="bg-purple-100 p-2 rounded-xl">
@@ -127,12 +187,19 @@ export default function AdminUsers() {
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex flex-col gap-1">
-                      <span className={cn(
-                        "px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest inline-flex w-fit",
-                        u.plan === 'free' ? 'bg-gray-100 text-gray-600' : 'bg-blue-100 text-blue-700'
-                      )}>
-                        <Zap className="w-2.5 h-2.5 mr-1" /> {u.plan}
-                      </span>
+                      <select 
+                        value={u.role || 'user'}
+                        disabled={processingId === u.id}
+                        onChange={(e) => updateRole(u.id, e.target.value)}
+                        className={cn(
+                          "px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest inline-flex w-fit outline-none cursor-pointer border-none",
+                          u.role === 'admin' ? 'bg-purple-100 text-purple-700' : u.role === 'moderator' ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-500'
+                        )}
+                      >
+                        <option value="user">User</option>
+                        <option value="moderator">Moderator</option>
+                        <option value="admin">Admin</option>
+                      </select>
                       <span className={cn(
                         "px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest inline-flex w-fit",
                         (u.status === 'suspended' || u.status === 'inactive') ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'

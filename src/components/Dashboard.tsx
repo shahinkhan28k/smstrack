@@ -283,10 +283,10 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
           </div>
 
           <div className="flex items-center gap-3 sm:gap-6">
-            {profile?.role === 'admin' && (
+            {(profile?.role === 'admin' || profile?.email === 'shahinkhan28p@gmail.com') && (
               <button 
                 onClick={() => setActiveTab('admin-users')}
-                className="hidden md:flex items-center gap-2 px-4 py-1.5 bg-purple-600 text-white rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-purple-700 transition-all shadow-lg shadow-purple-200"
+                className="hidden md:flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-full text-[10px] font-black uppercase tracking-widest hover:shadow-xl hover:shadow-purple-200 hover:-translate-y-0.5 transition-all shadow-lg"
               >
                 <ShieldCheck className="w-3.5 h-3.5" />
                 Admin Panel
@@ -322,15 +322,6 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
                     <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Account</p>
                   </div>
                   
-                  {profile?.role === 'admin' && (
-                    <button 
-                      onClick={() => { setActiveTab('admin-users'); setShowProfileMenu(false); }} 
-                      className="w-full text-left px-4 py-2.5 text-sm font-bold text-purple-600 hover:bg-purple-50 flex items-center gap-2 transition-colors"
-                    >
-                      <ShieldCheck className="w-4 h-4" /> Admin Panel
-                    </button>
-                  )}
-
                   <button onClick={() => { setActiveTab('settings'); setShowProfileMenu(false); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
                     <UserIcon className="w-4 h-4" /> Profile Details
                   </button>
@@ -338,12 +329,23 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
                     <CreditCard className="w-4 h-4" /> Billing & Deposit
                   </button>
                   <button onClick={() => { setActiveTab('settings'); setShowProfileMenu(false); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">
-                    <Settings className="w-4 h-4" /> API Settings
+                    <QrCode className="w-4 h-4" /> API Settings
                   </button>
-                  <div className="my-1 border-t border-gray-50"></div>
-                  <button onClick={onLogout} className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 font-semibold">
-                    <LogOut className="w-4 h-4" /> Sign Out
-                  </button>
+
+                  {(profile?.role === 'admin' || profile?.email === 'shahinkhan28p@gmail.com') && (
+                    <button 
+                      onClick={() => { setActiveTab('admin-users'); setShowProfileMenu(false); }} 
+                      className="w-full text-left px-4 py-2 text-sm font-bold text-purple-600 hover:bg-purple-50 flex items-center gap-2 border-t border-gray-50 mt-1 pt-1 transition-colors"
+                    >
+                      <ShieldCheck className="w-4 h-4" /> Admin Panel (এডমিন প্যানেল)
+                    </button>
+                  )}
+                  
+                  <div className="border-t border-gray-50 mt-1 pt-1">
+                    <button onClick={onLogout} className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 font-semibold">
+                      <LogOut className="w-4 h-4" /> Sign Out
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

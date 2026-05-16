@@ -327,7 +327,7 @@ export default function SettingsPanel({ profile, onRefresh, onShowUpgrade }: Set
           <div className="space-y-4">
             <div className="bg-blue-700/50 p-4 rounded-xl border border-blue-500/30">
               <p className="text-[10px] font-black uppercase tracking-widest text-blue-300 mb-1">API Endpoint (Use this in Mobile App)</p>
-              <code className="text-xs break-all font-mono">https://smstrack.onrender.com/api/v1/devices/connect</code>
+              <code className="text-xs break-all font-mono">{window.location.origin}/api/v1/devices/connect</code>
               <p className="text-[9px] text-blue-200 mt-2">Note: Ensure your app uses this exact URL for connection.</p>
             </div>
             

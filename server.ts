@@ -203,13 +203,19 @@ async function startServer() {
 
   // Device Connection API for Mobile Apps
   const deviceConnectHandler = async (req: express.Request, res: express.Response) => {
-    // Support both camelCase and snake_case for mobile app compatibility
-    const apiKey = req.body.apiKey || req.body.api_key;
-    const apiSecret = req.body.apiSecret || req.body.secret_key;
+    // Support multiple formats (apiKey/api_key, apiSecret/secret_key)
+    // and also check headers just in case
+    const apiKey = (req.body.apiKey || req.body.api_key || req.headers['x-api-key'])?.toString().trim();
+    const apiSecret = (req.body.apiSecret || req.body.secret_key || req.headers['x-api-secret'])?.toString().trim();
+    
     const { deviceName, deviceId, model, version } = req.body;
 
     if (!apiKey || !apiSecret) {
-      return res.status(400).json({ status: false, message: "এপিআই কি এবং সিক্রেট কি প্রদান করুন (apiKey/api_key, apiSecret/secret_key)" });
+      return res.status(400).json({ 
+        status: false, 
+        message: "এপিআই কি এবং সিক্রেট কি প্রদান করুন",
+        error_code: "MISSING_KEYS"
+      });
     }
 
     try {
@@ -219,24 +225,39 @@ async function startServer() {
       const userSnap = await getDocs(q);
 
       if (userSnap.empty) {
-        return res.status(401).json({ status: false, message: "ভুল এপিআই কি অথবা সিক্রেট কি ব্যবহার করা হয়েছে" });
+        return res.status(401).json({ 
+          status: false, 
+          message: "ভুল এপিআই কি অথবা সিক্রেট কি ব্যবহার করা হয়েছে",
+          error_code: "INVALID_CREDENTIALS"
+        });
       }
 
       const userId = userSnap.docs[0].id;
+      const userProfile = userSnap.docs[0].data();
+
+      // Check if user is active
+      if (userProfile.status === 'inactive') {
+        return res.status(403).json({ 
+          status: false, 
+          message: "আপনার একাউন্টটি বর্তমানে বন্ধ আছে। এডমিনের সাথে যোগাযোগ করুন।",
+          error_code: "ACCOUNT_INACTIVE"
+        });
+      }
 
       // 2. Register/Update Device
       const devicesRef = collection(db, 'devices');
-      // If a deviceId is provided by the app, try to find and update it
       let deviceSnap;
-      if (deviceId) {
-        const qDevice = query(devicesRef, where('userId', '==', userId), where('deviceId', '==', deviceId), limit(1));
+      const cleanDeviceId = (deviceId || '').toString().trim();
+
+      if (cleanDeviceId) {
+        const qDevice = query(devicesRef, where('userId', '==', userId), where('deviceId', '==', cleanDeviceId), limit(1));
         deviceSnap = await getDocs(qDevice);
       }
 
       const deviceData = {
         userId,
         name: deviceName || model || "Unknown Device",
-        deviceId: deviceId || `DEV_${Math.random().toString(36).substring(7).toUpperCase()}`,
+        deviceId: cleanDeviceId || `DEV_${Math.random().toString(36).substring(7).toUpperCase()}`,
         deviceToken: `TOK_${Math.random().toString(36).substring(2, 10).toUpperCase()}`,
         model: model || "Unknown",
         version: version || "1.0.0",
@@ -261,9 +282,13 @@ async function startServer() {
           deviceId: deviceData.deviceId
         }
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Device Connection Error:", error);
-      res.status(500).json({ status: false, message: "সার্ভারে সমস্যা হয়েছে, আবার চেষ্টা করুন" });
+      res.status(500).json({ 
+        status: false, 
+        message: "সার্ভারে সমস্যা হয়েছে, আবার চেষ্টা করুন",
+        debug: error.message || String(error)
+      });
     }
   };
 

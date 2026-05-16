@@ -15,7 +15,7 @@ const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT || 3000;
 
   app.use(express.json());
 
@@ -202,15 +202,7 @@ async function startServer() {
   });
 
   // Device Connection API for Mobile Apps
-  app.get("/api/device/connect", (req, res) => {
-    res.json({ 
-      status: "active", 
-      message: "Gateway API logic is running. Use POST to connect devices.",
-      endpoint: "/api/device/connect"
-    });
-  });
-
-  app.post("/api/device/connect", async (req, res) => {
+  const deviceConnectHandler = async (req: express.Request, res: express.Response) => {
     // Support both camelCase and snake_case for mobile app compatibility
     const apiKey = req.body.apiKey || req.body.api_key;
     const apiSecret = req.body.apiSecret || req.body.secret_key;
@@ -227,7 +219,7 @@ async function startServer() {
       const userSnap = await getDocs(q);
 
       if (userSnap.empty) {
-        return res.status(401).json({ status: "error", message: "ভুল এপিআই কি অথবা সিক্রেট কি ব্যবহার করা হয়েছে" });
+        return res.status(401).json({ status: false, message: "ভুল এপিআই কি অথবা সিক্রেট কি ব্যবহার করা হয়েছে" });
       }
 
       const userId = userSnap.docs[0].id;
@@ -272,7 +264,25 @@ async function startServer() {
       console.error("Device Connection Error:", error);
       res.status(500).json({ status: false, message: "সার্ভারে সমস্যা হয়েছে, আবার চেষ্টা করুন" });
     }
+  };
+
+  app.get("/api/device/connect", (req, res) => {
+    res.json({ 
+      status: true, 
+      message: "Gateway API logic is running. Use POST to connect devices.",
+      endpoints: ["/api/device/connect", "/api/v1/device/connect"]
+    });
   });
+
+  app.get("/api/v1/device/connect", (req, res) => {
+    res.json({ 
+      status: true, 
+      message: "Gateway V1 API logic is running. Use POST to connect devices."
+    });
+  });
+
+  app.post("/api/device/connect", deviceConnectHandler);
+  app.post("/api/v1/device/connect", deviceConnectHandler);
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

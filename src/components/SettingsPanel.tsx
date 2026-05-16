@@ -13,7 +13,8 @@ import {
   Wallet,
   Zap,
   Shield,
-  QrCode
+  QrCode,
+  Globe
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { generateApiKey, generateApiSecret } from '../lib/utils';
@@ -136,20 +137,42 @@ export default function SettingsPanel({ profile, onRefresh, onShowUpgrade }: Set
               </div>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Webhook Notification URL</label>
-              <div className="flex items-center gap-3 px-4 py-3 bg-gray-50 rounded-xl border border-gray-100 text-sm font-medium text-gray-900 focus-within:ring-1 focus-within:ring-blue-500 focus-within:bg-white transition-all">
-                <Zap className="w-4 h-4 text-gray-400" />
-                <input 
-                  type="url" 
-                  value={webhookUrl}
-                  onChange={(e) => setWebhookUrl(e.target.value)}
-                  placeholder="https://your-site.com/webhooks/sms"
-                  className="bg-transparent outline-hidden w-full"
-                />
+            <div className="space-y-4 pt-6 border-t border-gray-50">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-amber-500" />
+                  Webhook Notification URL
+                </label>
+                <div className="group relative">
+                  <Shield className="w-4 h-4 text-gray-300 cursor-help" />
+                  <div className="absolute right-0 bottom-full mb-2 w-64 p-3 bg-gray-900 text-[10px] text-gray-300 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none shadow-xl z-20">
+                    আমাদের সিস্টেম যখনই কোনো পেমেন্ট বা এসএমএস কনফার্ম করবে, তখন এই URL-এ একটি POST রিকোয়েস্ট পাঠাবে। এটি আপনার এক্সটারনাল ওয়েবসাইট বা সফটওয়্যারের সাথে ইন্টিগ্রেশনের জন্য ব্যবহৃত হয়।
+                  </div>
+                </div>
               </div>
-              <p className="text-[10px] text-gray-400 leading-relaxed">
-                এটি আপনার মূল ওয়েবসাইটের লিংক। যখনই একটি পেমেন্ট বা এসএমএস ম্যাচ হবে, আমাদের সিস্টেম স্বয়ংক্রিয়ভাবে একটি ডেটা আপনার এই লিংকে পাঠিয়ে দেবে যাতে আপনার ওয়েবসাইটে পেমেন্ট স্ট্যাটাস <b>"Auto Approved"</b> হয়ে যায়।
+
+              <div className="flex flex-col sm:flex-row gap-3">
+                <div className="flex-1 flex items-center gap-3 px-4 py-3 bg-gray-50 rounded-xl border border-gray-100 text-sm font-medium text-gray-900 focus-within:ring-2 focus-within:ring-blue-500 focus-within:bg-white transition-all">
+                  <Globe className="w-4 h-4 text-gray-400" />
+                  <input 
+                    type="url" 
+                    value={webhookUrl}
+                    onChange={(e) => setWebhookUrl(e.target.value)}
+                    placeholder="https://your-website.com/api/v1/webhook"
+                    className="bg-transparent outline-hidden w-full font-mono text-xs"
+                  />
+                </div>
+                <button 
+                  onClick={handleSaveProfile}
+                  disabled={loading}
+                  className="px-6 py-3 bg-blue-600 text-white text-xs font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 flex items-center justify-center gap-2 shrink-0 disabled:opacity-50"
+                >
+                  {loading ? <RefreshCcw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                  Save Webhook
+                </button>
+              </div>
+              <p className="text-[10px] text-gray-500 font-medium leading-relaxed bg-blue-50/50 p-3 rounded-lg border border-blue-100/50">
+                <span className="text-blue-600 font-bold">Pro Tip:</span> This URL is where our server sends real-time payment notifications. Use this to automate your order approvals on external platforms like WordPress, PHP Scripts, or Custom Apps.
               </p>
             </div>
           </div>

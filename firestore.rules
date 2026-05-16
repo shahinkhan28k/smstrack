@@ -21,7 +21,10 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      return isSignedIn() && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+        (request.auth.token.email == 'shahinkhan28p@gmail.com' && request.auth.token.email_verified == true)
+      );
     }
 
     // User Profile
@@ -42,19 +45,25 @@ service cloud.firestore {
     // Devices
     match /devices/{deviceId} {
       // Allow server-side read/write (unauthenticated)
-      allow read, create, update: if request.auth == null || (isSignedIn() && resource.data.userId == request.auth.uid);
-      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow read, create, update: if request.auth == null || (isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin()));
+      allow delete: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
     }
 
     // Transactions
     match /transactions/{transactionId} {
-      // Allow server-side read/create (unauthenticated)
-      allow read, create: if request.auth == null || (isSignedIn() && resource.data.userId == request.auth.uid);
+      // Allow server-side read/create (unauthenticated) or admin read all
+      allow read, create: if request.auth == null || (isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin()));
+    }
+
+    // Raw SMS Logs
+    match /raw_sms/{smsId} {
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if request.auth == null; // Created by server
     }
 
     // Subscriptions - Read-only for users
     match /subscriptions/{subId} {
-      allow list, get: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow list, get: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
     }
 
     // Deposit Requests

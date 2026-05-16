@@ -155,36 +155,43 @@ async function startServer() {
         status: 'received'
       });
 
-      // 5. Extraction Logic (Regex)
-      let amount = 0;
-      let trxId = "";
-      let provider = "Unknown";
+      // 5. Extraction Logic (Prioritize structured data from request body)
+      let amount = parseFloat(req.body.amount || req.body.amount_tk || req.body.tk || "0");
+      let trxId = (req.body.trxId || req.body.transaction_id || req.body.txn_id || req.body.trx_id || "")?.toString();
+      let provider = (req.body.provider || req.body.method || req.body.type || "Unknown")?.toString();
 
-      // Pattern definitions
-      const bkashPattern = /You have received (?:Tk )?([\d,]+\.?\d*) from (\d+)\. .*TrxID ([A-Z0-9]+)/i;
-      const nagadPattern = /Tk ([\d,]+\.?\d*) Received from (\d+)\. .*TxnID: ([A-Z0-9]+)/i;
-      const rocketPattern = /Tk\. ([\d,]+\.?\d*) received from (\d+)\. .*TrxID: ([A-Z0-9]+)/i;
+      // If structured data is missing or incomplete, attempt regex extraction from message
+      if (amount <= 0 || !trxId || provider === "Unknown") {
+        // Pattern definitions
+        const bkashPattern = /You have received (?:Tk )?([\d,]+\.?\d*) from (\d+)\. .*TrxID ([A-Z0-9]+)/i;
+        const nagadPattern = /Tk ([\d,]+\.?\d*) Received from (\d+)\. .*TxnID: ([A-Z0-9]+)/i;
+        const rocketPattern = /Tk\. ([\d,]+\.?\d*) received from (\d+)\. .*TrxID: ([A-Z0-9]+)/i;
 
-      let match;
-      if ((match = message.match(bkashPattern))) {
-        provider = "bKash";
-        amount = parseFloat(match[1].replace(/,/g, ''));
-        trxId = match[3];
-      } else if ((match = message.match(nagadPattern))) {
-        provider = "Nagad";
-        amount = parseFloat(match[1].replace(/,/g, ''));
-        trxId = match[3];
-      } else if ((match = message.match(rocketPattern))) {
-        provider = "Rocket";
-        amount = parseFloat(match[1].replace(/,/g, ''));
-        trxId = match[3];
-      } else {
-        // Fallback generic extraction
-        const amountMatch = message.match(/(?:Tk|Amount|Tk\.)\s?([\d,]+\.?\d*)/i);
-        if (amountMatch) amount = parseFloat(amountMatch[1].replace(/,/g, ''));
-        
-        const trxMatch = message.match(/(?:TrxID|TxnID|ID)[:\s]+([A-Z0-9]+)/i);
-        if (trxMatch) trxId = trxMatch[1];
+        let match;
+        if ((match = message.match(bkashPattern))) {
+          if (provider === "Unknown") provider = "bKash";
+          if (amount <= 0) amount = parseFloat(match[1].replace(/,/g, ''));
+          if (!trxId) trxId = match[3];
+        } else if ((match = message.match(nagadPattern))) {
+          if (provider === "Unknown") provider = "Nagad";
+          if (amount <= 0) amount = parseFloat(match[1].replace(/,/g, ''));
+          if (!trxId) trxId = match[3];
+        } else if ((match = message.match(rocketPattern))) {
+          if (provider === "Unknown") provider = "Rocket";
+          if (amount <= 0) amount = parseFloat(match[1].replace(/,/g, ''));
+          if (!trxId) trxId = match[3];
+        } else {
+          // Fallback generic extraction
+          if (amount <= 0) {
+            const amountMatch = message.match(/(?:Tk|Amount|Tk\.)\s?([\d,]+\.?\d*)/i);
+            if (amountMatch) amount = parseFloat(amountMatch[1].replace(/,/g, ''));
+          }
+          
+          if (!trxId) {
+            const trxMatch = message.match(/(?:TrxID|TxnID|ID)[:\s]+([A-Z0-9]+)/i);
+            if (trxMatch) trxId = trxMatch[1];
+          }
+        }
       }
 
       const txData = {

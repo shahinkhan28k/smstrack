@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Device } from '../types';
-import { Smartphone, RefreshCw, Trash2, Shield, Circle, User } from 'lucide-react';
+import { Smartphone, RefreshCw, Trash2, Shield, Circle, User, Globe } from 'lucide-react';
 import { format } from 'date-fns';
 import { doc, deleteDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -23,6 +23,46 @@ export default function DeviceManager({ devices, userId, onShowAddDevice }: Devi
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="bg-white rounded-2xl border border-blue-100 shadow-sm p-6 mb-8 overflow-hidden relative">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="p-1.5 bg-blue-600 rounded-lg text-white">
+                <Globe className="w-4 h-4" />
+              </div>
+              <h3 className="text-lg font-bold text-gray-900">SMS Gateway Configuration</h3>
+            </div>
+            <p className="text-gray-500 text-sm leading-relaxed mb-4">
+              আপনার এন্ড্রয়েড অ্যাপে নিচের URL টি <b>"Forwarding URL"</b> বা <b>"HTTP URL"</b> হিসেবে সেট করুন। এর মাধ্যমে আপনার ফোনে আসা এসএমএস গুলো আমাদের সার্ভারে জমা হবে এবং অটো-ম্যাচিং কাজ করবে।
+            </p>
+            <div className="flex items-center gap-3">
+              <div className="flex-1 bg-gray-50 border border-gray-100 px-4 py-2.5 rounded-xl font-mono text-[11px] sm:text-xs text-blue-700 font-bold select-all truncate">
+                {`${window.location.origin}/api/v1/receive`}
+              </div>
+              <button 
+                onClick={() => {
+                  navigator.clipboard.writeText(`${window.location.origin}/api/v1/receive`);
+                  alert('URL Coipied!');
+                }}
+                className="px-4 py-2.5 bg-blue-50 text-blue-600 rounded-xl text-xs font-bold hover:bg-blue-100 transition-all flex items-center gap-2 whitespace-nowrap"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Copy URL
+              </button>
+            </div>
+          </div>
+          <div className="w-full md:w-auto p-4 bg-amber-50 border border-amber-100 rounded-2xl">
+            <div className="flex items-center gap-2 mb-1 text-amber-700">
+              <Shield className="w-4 h-4" />
+              <span className="text-[10px] font-black uppercase tracking-widest">Setup Note</span>
+            </div>
+            <p className="text-[10px] text-amber-800 font-medium leading-relaxed max-w-xs">
+              অ্যাপে HTTP Method টি <b>POST</b> হতে হবে। এর সাথে আপনার <b>API Key</b> এবং <b>Secret Key</b> প্যাসওয়ার্ড হিসেবে বা হেডার হিসেবে ব্যবহার করতে পারেন।
+            </p>
+          </div>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {devices.map((device) => (
           <div key={device.id} className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm relative overflow-hidden group">

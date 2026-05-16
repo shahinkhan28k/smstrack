@@ -111,43 +111,56 @@ async function startServer() {
     }
   });
 
-  app.post("/api/v1/store-transaction", async (req, res) => {
-    const { apiKey, apiSecret, message, provider, deviceId } = req.body;
-    
-    if (!apiKey || !apiSecret || !message) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
-
+  // Universal SMS Receiver Handler
+  const universalSmsHandler = async (req: express.Request, res: express.Response) => {
     try {
-      // 1. Verify User
+      // 1. Extract Credentials
+      const apiKey = (req.query.apiKey || req.body.apiKey || req.body.api_key || req.headers['x-api-key'])?.toString().trim();
+      const apiSecret = (req.query.apiSecret || req.body.apiSecret || req.body.secret_key || req.headers['x-api-secret'])?.toString().trim();
+      
+      // 2. Extract SMS Content
+      const message = (req.body.message || req.body.text || req.body.content || req.body.msg || req.body.SMS_MESSAGE)?.toString();
+      const sender = (req.body.sender || req.body.from || req.body.phone || req.body.SENDER_NUMBER)?.toString() || "Unknown";
+      const deviceId = (req.body.deviceId || req.body.device_id || req.body.DEVICE_ID || req.headers['x-device-id'])?.toString() || "unknown";
+
+      console.log(`[SMS RECEIVE] From: ${sender}, Device: ${deviceId}, Msg: ${message?.substring(0, 50)}...`);
+
+      if (!apiKey || !apiSecret || !message) {
+        return res.status(400).json({ 
+          status: false, 
+          message: "এপিআই কি, সিক্রেট কি এবং মেসেজ প্রয়োজন",
+          missing: !apiKey ? "apiKey" : (!apiSecret ? "apiSecret" : "message")
+        });
+      }
+
+      // 3. Verify User
       const usersRef = collection(db, 'users');
       const qUser = query(usersRef, where('apiKey', '==', apiKey), where('apiSecret', '==', apiSecret), limit(1));
       const userSnap = await getDocs(qUser);
       
       if (userSnap.empty) {
-        return res.status(401).json({ error: "Invalid Credentials" });
+        return res.status(401).json({ status: false, message: "ভুল এপিআই কি অথবা সিক্রেট কি ব্যবহার করা হয়েছে" });
       }
       
       const userId = userSnap.docs[0].id;
       const userData = userSnap.docs[0].data() as any;
 
-      // 1.5. Log Raw SMS
-      await addDoc(collection(db, 'raw_sms'), {
+      // 4. Log Raw SMS immediately
+      const rawSmsRef = await addDoc(collection(db, 'raw_sms'), {
         userId,
-        deviceId: deviceId || "unknown",
-        sender: "unknown", // To be extracted
+        deviceId,
+        sender,
         message,
         timestamp: new Date().toISOString(),
-        status: 'processed'
+        status: 'received'
       });
 
-      // 2. Extract Data (Improved regex for bKash, Nagad, Rocket)
+      // 5. Extraction Logic (Regex)
       let amount = 0;
       let trxId = "";
-      let sender = "Unknown";
       let provider = "Unknown";
 
-      // Common regex patterns
+      // Pattern definitions
       const bkashPattern = /You have received (?:Tk )?([\d,]+\.?\d*) from (\d+)\. .*TrxID ([A-Z0-9]+)/i;
       const nagadPattern = /Tk ([\d,]+\.?\d*) Received from (\d+)\. .*TxnID: ([A-Z0-9]+)/i;
       const rocketPattern = /Tk\. ([\d,]+\.?\d*) received from (\d+)\. .*TrxID: ([A-Z0-9]+)/i;
@@ -156,78 +169,59 @@ async function startServer() {
       if ((match = message.match(bkashPattern))) {
         provider = "bKash";
         amount = parseFloat(match[1].replace(/,/g, ''));
-        sender = match[2];
         trxId = match[3];
       } else if ((match = message.match(nagadPattern))) {
         provider = "Nagad";
         amount = parseFloat(match[1].replace(/,/g, ''));
-        sender = match[2];
         trxId = match[3];
       } else if ((match = message.match(rocketPattern))) {
         provider = "Rocket";
         amount = parseFloat(match[1].replace(/,/g, ''));
-        sender = match[2];
         trxId = match[3];
       } else {
-        // Fallback to basic extraction if patterns don't match exactly
+        // Fallback generic extraction
         const amountMatch = message.match(/(?:Tk|Amount|Tk\.)\s?([\d,]+\.?\d*)/i);
         if (amountMatch) amount = parseFloat(amountMatch[1].replace(/,/g, ''));
         
         const trxMatch = message.match(/(?:TrxID|TxnID|ID)[:\s]+([A-Z0-9]+)/i);
         if (trxMatch) trxId = trxMatch[1];
-
-        const senderMatch = message.match(/(?:from|sender)[:\s]+(\d+)/i);
-        if (senderMatch) sender = senderMatch[1];
       }
 
-      if (!trxId) {
-        trxId = "EXT_" + Math.random().toString(36).substring(7).toUpperCase();
-      }
-
-      // 3. Save Transaction
       const txData = {
         userId,
-        deviceId: deviceId || "unknown",
+        deviceId,
         provider,
         amount,
-        trxId,
+        trxId: trxId || "EXT_" + Math.random().toString(36).substring(7).toUpperCase(),
         sender,
         message,
         transactionTime: new Date().toISOString(),
         createdAt: new Date().toISOString()
       };
-      
-      const txRef = await addDoc(collection(db, 'transactions'), txData);
 
-      // 4. Matching Logic (The "Middleman" core)
-      // Find a pending deposit request with same amount
-      const depositRef = collection(db, 'depositRequests');
-      let qMatch;
-      
-      // Attempt to match by amount and phone if phone is known
-      if (sender && sender !== "Unknown" && sender.length >= 11) {
-        // Try higher precision match first
-        const last10 = sender.slice(-10);
-        qMatch = query(
+      // 6. Save Transaction if valid amount/id found
+      if (amount > 0 || trxId) {
+        const txRef = await addDoc(collection(db, 'transactions'), txData);
+        await updateDoc(doc(db, 'raw_sms', rawSmsRef.id), { status: 'processed', transactionId: txRef.id });
+
+        // 7. Matching Logic
+        const depositRef = collection(db, 'depositRequests');
+        const qMatch = query(
           depositRef, 
           where('userId', '==', userId), 
           where('amount', '==', amount), 
           where('status', '==', 'pending')
         );
-        // Note: Firestore doesn't support easy "ends with" for numbers, 
-        // so we fetch all pending of same amount and filter in memory for phone matching
+        
         const matchSnap = await getDocs(qMatch);
-        let matchedDoc = null;
-
         if (!matchSnap.empty) {
-          matchedDoc = matchSnap.docs.find(doc => {
+          // Precise phone match if possible
+          const cleanSender = sender.slice(-10);
+          const matchedDoc = matchSnap.docs.find(doc => {
             const data = doc.data() as any;
-            if (!data.senderPhone) return true; // If no phone specified in request, match any
-            return data.senderPhone.includes(last10);
-          });
-        }
+            return !data.senderPhone || data.senderPhone.includes(cleanSender);
+          }) || matchSnap.docs[0];
 
-        if (matchedDoc) {
           const depositData = matchedDoc.data() as any;
           await updateDoc(doc(db, 'depositRequests', matchedDoc.id), {
             status: 'matched',
@@ -235,84 +229,61 @@ async function startServer() {
             matchedAt: new Date().toISOString()
           });
 
-          // Webhook logic...
+          // 8. Webhook Notification
           const finalWebhookUrl = depositData.webhookUrl || userData.webhookUrl;
           if (finalWebhookUrl) {
-            console.log(`[GATEWAY] Triggering webhook: ${finalWebhookUrl}`);
             try {
               await fetch(finalWebhookUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  event: 'deposit.matched',
-                  requestId: matchedDoc.id,
+                  event: 'payment.confirmed',
+                  amount,
+                  trxId: txData.trxId,
+                  sender,
+                  provider,
                   externalId: depositData.externalId,
-                  amount: amount,
-                  trxId: trxId,
-                  sender: sender,
-                  provider: provider,
                   timestamp: new Date().toISOString()
                 })
               });
-            } catch (webhookErr) {
-              console.error("Webhook failed:", webhookErr);
-            }
-          }
-        }
-      } else {
-        // Fallback to simple amount match
-        qMatch = query(
-          depositRef, 
-          where('userId', '==', userId), 
-          where('amount', '==', amount), 
-          where('status', '==', 'pending'),
-          limit(1)
-        );
-        const matchSnap = await getDocs(qMatch);
-        if (!matchSnap.empty) {
-          const depositDoc = matchSnap.docs[0];
-          const depositData = depositDoc.data() as any;
-          
-          await updateDoc(doc(db, 'depositRequests', depositDoc.id), {
-            status: 'matched',
-            matchedTransactionId: txRef.id,
-            matchedAt: new Date().toISOString()
-          });
-
-          const finalWebhookUrl = depositData.webhookUrl || userData.webhookUrl;
-          if (finalWebhookUrl) {
-            console.log(`[GATEWAY] Triggering webhook: ${finalWebhookUrl}`);
-            try {
-              await fetch(finalWebhookUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  event: 'deposit.matched',
-                  requestId: depositDoc.id,
-                  externalId: depositData.externalId,
-                  amount: amount,
-                  trxId: trxId,
-                  sender: sender,
-                  provider: provider,
-                  timestamp: new Date().toISOString()
-                })
-              });
-            } catch (webhookErr) {
-              console.error("Webhook failed:", webhookErr);
+            } catch (err) {
+              console.error("Webhook Error:", err);
             }
           }
         }
       }
 
       res.json({ 
-        status: "success", 
-        data: txData
+        status: true, 
+        success: true, 
+        message: "মেসেজটি সফলভাবে প্রসেস করা হয়েছে", 
+        data: txData 
       });
-    } catch (error) {
-      console.error(error);
-      res.status(500).json({ error: "Failed to process transaction" });
+    } catch (error: any) {
+      console.error("SMS Processing Error:", error);
+      res.status(500).json({ 
+        status: false, 
+        success: false, 
+        error: error.message 
+      });
     }
+  };
+
+  // Register multiple alias endpoints for maximum compatibility with Android apps
+  const smsEndpoints = [
+    "/api/v1/store-transaction",
+    "/api/v1/sms/receive",
+    "/api/v1/receive",
+    "/api/v1/callback",
+    "/api/v1/sms/webhook",
+    "/api/receive",
+    "/api/sms"
+  ];
+
+  smsEndpoints.forEach(endpoint => {
+    app.post(endpoint, universalSmsHandler);
   });
+
 
   // Device Connection API for Mobile Apps
   const deviceConnectHandler = async (req: express.Request, res: express.Response) => {

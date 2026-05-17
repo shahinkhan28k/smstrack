@@ -4,7 +4,7 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import * as dotenv from "dotenv";
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, query, where, getDocs, updateDoc, doc, limit, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, query, where, getDocs, updateDoc, doc, limit, serverTimestamp, increment } from 'firebase/firestore';
 import firebaseConfig from './firebase-applet-config.json';
 
 dotenv.config();
@@ -318,6 +318,39 @@ async function startServer() {
                 timestamp: new Date().toISOString()
               })
             }).catch(e => console.error("[WEBHOOK ERROR]:", e));
+          }
+        }
+
+        // 8. System Balance Topup Logic (If SMS received by an Admin)
+        if (userData?.role === 'admin' && trxId && amount > 0) {
+          const userDepositsRef = collection(db, 'userDeposits');
+          // Match by TrxID and Amount (pending status)
+          const qTopup = query(userDepositsRef, where('trxId', '==', trxId), where('status', '==', 'pending'), limit(1));
+          const topupSnap = await getDocs(qTopup);
+
+          if (!topupSnap.empty) {
+            const depositDoc = topupSnap.docs[0];
+            const depositData = depositDoc.data();
+            
+            // Amount check (just in case)
+            if (depositData.amount === amount) {
+              console.log(`[TOPUP] Matching system deposit found for user: ${depositData.userId}`);
+              
+              // 1. Update deposit status
+              await updateDoc(doc(db, 'userDeposits', depositDoc.id), {
+                status: 'approved',
+                matchedAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+              });
+
+              // 2. Increment user balance
+              const userToTopupRef = doc(db, 'users', depositData.userId);
+              await updateDoc(userToTopupRef, {
+                balance: increment(amount)
+              });
+
+              console.log(`[TOPUP SUCCESS] User ${depositData.userId} balance increased by ${amount}`);
+            }
           }
         }
       }

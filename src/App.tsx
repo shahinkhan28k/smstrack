@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { auth, loginWithGoogle, logout } from './lib/firebase';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db, auth, loginWithGoogle, logout } from './lib/firebase';
 import { userService } from './lib/services';
 import { UserProfile } from './types';
 import Landing from './components/Landing';
@@ -22,31 +23,50 @@ export default function App() {
       return;
     }
 
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    let profileUnsub: (() => void) | null = null;
+
+    const authUnsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
+      
+      // Cleanup previous profile listener if exists
+      if (profileUnsub) {
+        profileUnsub();
+        profileUnsub = null;
+      }
+
       if (firebaseUser) {
-        let userProfile = await userService.getProfile(firebaseUser.uid);
-        if (!userProfile) {
-          // Initialize profile
-          userProfile = {
+        // Initial setup/check
+        const existingProfile = await userService.getProfile(firebaseUser.uid);
+        if (!existingProfile) {
+          const newProfile: UserProfile = {
             id: firebaseUser.uid,
             name: firebaseUser.displayName || 'User',
             email: firebaseUser.email || '',
             role: 'user',
             plan: 'free',
+            balance: 0,
             status: 'active',
             createdAt: new Date().toISOString()
           };
-          await userService.createProfile(userProfile);
+          await userService.createProfile(newProfile);
         }
-        setProfile(userProfile);
+
+        // Real-time listener
+        profileUnsub = onSnapshot(doc(db, 'users', firebaseUser.uid), (doc) => {
+          if (doc.exists()) {
+            setProfile({ id: doc.id, ...doc.data() } as UserProfile);
+          }
+        });
       } else {
         setProfile(null);
       }
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      authUnsubscribe();
+      if (profileUnsub) profileUnsub();
+    };
   }, []);
 
   if (loading) {

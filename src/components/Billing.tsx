@@ -202,15 +202,24 @@ export default function Billing({ profile, onUpgrade }: BillingProps) {
                   <div>
                     <h4 className="text-2xl font-bold text-gray-900 mb-2">রিকোয়েস্ট সেন্ট!</h4>
                     <p className="text-sm text-gray-500 max-w-sm mx-auto">
-                      আপনার <b>{amount} TK</b> ডিপোজিট রিকোয়েস্ট (TrxID: {trxId}) পেন্ডিং অবস্থায় আছে। অ্যাডমিন চেক করে খুব দ্রুত এটি এপ্রুভ করবেন।
+                      আপনার <b>{amount} TK</b> ডিপোজিট রিকোয়েস্ট (TrxID: {trxId}) প্রসেসিং হচ্ছে। 
+                      সিস্টেম অটোমেটিক আপনার ট্রানজেকশন ম্যাচ করার চেষ্টা করছে। সফল হলে অটো ব্যালেন্স অ্যাড হয়ে যাবে।
                     </p>
                   </div>
-                  <button 
-                    onClick={() => { setStep('method'); setSelectedMethod(null); setAmount(''); setTrxId(''); }}
-                    className="px-8 py-3 bg-gray-900 text-white rounded-xl font-bold text-sm hover:bg-black transition-all"
-                  >
-                    ফিরে যান
-                  </button>
+                  <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                    <button 
+                      onClick={() => { setStep('method'); setSelectedMethod(null); setAmount(''); setTrxId(''); }}
+                      className="px-8 py-3 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-100"
+                    >
+                      আরও ফান্ড অ্যাড করুন
+                    </button>
+                    <button 
+                      onClick={() => window.location.reload()} // Hack to refresh dashboard state if needed, but App.tsx handles it. Actually just return to dashboard.
+                      className="px-8 py-3 bg-gray-900 text-white rounded-xl font-bold text-sm hover:bg-black transition-all"
+                    >
+                      ড্যাশবোর্ডে ফিরে যান
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

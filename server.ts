@@ -161,6 +161,42 @@ async function startServer() {
     }
   });
 
+  // Helper to notify merchant webhook
+  const notifyMerchant = async (userId: string, requestId: string, depositData: any, amount: number, trxId: string, sender: string, provider: string) => {
+    try {
+      const userSnap = await getDocs(query(collection(db, 'users'), where('__name__', '==', userId), limit(1)));
+      if (userSnap.empty) return;
+      const userData = userSnap.docs[0].data();
+      const apiSecret = userData.apiSecret || 'none';
+      const finalWebhookUrl = depositData.webhookUrl || userData.webhookUrl;
+
+      if (finalWebhookUrl) {
+        console.log(`[WEBHOOK] Notifying ${finalWebhookUrl} for request ${requestId}`);
+        fetch(finalWebhookUrl, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'X-Gateway-Secret': apiSecret
+          },
+          body: JSON.stringify({
+            event: 'payment.confirmed',
+            success: true,
+            requestId: requestId,
+            externalId: depositData.externalId,
+            amount: Number(amount),
+            trxId: trxId,
+            sender: sender || "Unknown",
+            provider: provider || "Unknown",
+            timestamp: new Date().toISOString(),
+            note: "Matched during administrative rescan"
+          })
+        }).catch(e => console.error("[WEBHOOK ERROR]:", e));
+      }
+    } catch (e) {
+      console.error("[WEBHOOK NOTIFY ERROR]:", e);
+    }
+  };
+
   // Admin: Rescan all pending deposits (both system deposits and merchant requests)
   app.post("/api/v1/admin/rescan-deposits", async (req, res) => {
     console.log("[RESCAN] Starting super-rescan...");
@@ -218,6 +254,9 @@ async function startServer() {
                 matchedTransactionId: txSnap.docs[0].id,
                 matchingNote: 'Auto-matched via Transaction ID'
               });
+              
+              // Trigger Webhook for Merchant
+              await notifyMerchant(userId, docRef.id, data, amount, trxId, txData.sender || "Unknown", txData.provider || "Unknown");
             }
             return true;
           } else {
@@ -248,6 +287,9 @@ async function startServer() {
               updatedAt: new Date().toISOString(),
               matchingNote: 'Auto-matched via Deep SMS Search'
             });
+
+            // Trigger Webhook for Merchant
+            await notifyMerchant(userId, docRef.id, data, amount, trxId, smsMatch.sender || "Unknown", smsMatch.provider || "Unknown");
           }
           return true;
         }

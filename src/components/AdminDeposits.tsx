@@ -66,16 +66,20 @@ export default function AdminDeposits() {
   const handleRescan = async () => {
     setRescanning(true);
     try {
-      const res = await fetch('/api/v1/admin/rescan-deposits', { method: 'POST' });
+      const res = await fetch('/api/v1/admin/rescan-deposits', { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
       const data = await res.json();
       if (data.success) {
-        alert(`Auto-matching complete! ${data.matchedCount} deposits matched.`);
+        alert(`${data.message || 'Auto-matching complete!'} Matches: ${data.matchedCount}`);
       } else {
-        alert("Rescan failed.");
+        alert(data.error || "Rescan failed.");
+        if (data.details) console.error("Rescan details:", data.details);
       }
     } catch (e) {
       console.error(e);
-      alert("Error during rescan.");
+      alert("Error during rescan. Server may be offline or taking too long.");
     } finally {
       setRescanning(false);
     }

@@ -115,7 +115,7 @@ export default function AdminAllDevices() {
                         <Smartphone className="w-5 h-5" />
                       </div>
                       <div>
-                        <div className="text-sm font-bold text-gray-900">{d.deviceName}</div>
+                        <div className="text-sm font-bold text-gray-900">{d.deviceName || (d as any).name || 'Unknown Device'}</div>
                         <div className="text-[10px] text-gray-400 font-mono flex items-center gap-1 uppercase">
                           <Shield className="w-2.5 h-2.5" /> {d.deviceId?.substring(0, 12)}
                         </div>
@@ -145,7 +145,7 @@ export default function AdminAllDevices() {
                   <td className="px-6 py-4">
                     <div className="text-xs text-gray-500 flex items-center gap-1">
                       <Calendar className="w-3 h-3" />
-                      {d.lastSeen ? format(new Date(d.lastSeen), 'MMM dd, HH:mm:ss') : 'Never'}
+                      {d.lastSeen || (d as any).lastActive ? format(new Date(d.lastSeen || (d as any).lastActive), 'MMM dd, HH:mm:ss') : 'Never'}
                     </div>
                   </td>
                   <td className="px-6 py-4 text-right">

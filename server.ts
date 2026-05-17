@@ -161,47 +161,108 @@ async function startServer() {
     }
   });
 
-  // Admin: Rescan all pending deposits for matches in transaction history
+  // Admin: Rescan all pending deposits (both system deposits and merchant requests)
   app.post("/api/v1/admin/rescan-deposits", async (req, res) => {
     try {
-      const pendingQ = query(collection(db, 'userDeposits'), where('status', '==', 'pending'));
-      const pendingSnap = await getDocs(pendingQ);
-      
       let matchedCount = 0;
 
-      for (const pendingDoc of pendingSnap.docs) {
+      // Helper to process a pending request
+      const tryMatch = async (pendingDoc: any, isSystem: boolean) => {
         const data = pendingDoc.data();
-        const trxId = data.trxId;
+        const trxId = (data.trxId || '').toUpperCase().trim();
         const amount = data.amount;
+        const userId = data.userId;
 
-        if (trxId) {
-          // Look for matching transaction
-          const txQ = query(collection(db, 'transactions'), where('trxId', '==', trxId), limit(1));
-          const txSnap = await getDocs(txQ);
+        if (!trxId || !amount) return false;
 
-          if (!txSnap.empty) {
-            const txData = txSnap.docs[0].data();
-            if (Math.abs(txData.amount - amount) < 0.1) {
-              // Match found!
+        // 1. Check existing transactions
+        let txQ = query(collection(db, 'transactions'), where('trxId', '==', trxId), limit(1));
+        let txSnap = await getDocs(txQ);
+
+        if (!txSnap.empty) {
+          const txData = txSnap.docs[0].data();
+          if (Math.abs(txData.amount - amount) < 0.1) {
+            // Found in transactions!
+            if (isSystem) {
               await updateDoc(doc(db, 'userDeposits', pendingDoc.id), {
                 status: 'approved',
                 matchedAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString()
               });
-
-              await updateDoc(doc(db, 'users', data.userId), {
-                balance: increment(amount)
+              await updateDoc(doc(db, 'users', userId), { balance: increment(amount) });
+            } else {
+              await updateDoc(doc(db, 'depositRequests', pendingDoc.id), {
+                status: 'matched',
+                matchedAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                matchedTransactionId: txSnap.docs[0].id
               });
-
-              matchedCount++;
             }
+            return true;
           }
+        }
+
+        // 2. Fallback: Check raw_sms for un-extracted TrxIDs
+        // This is "powerful" matching - searching message bodies directly
+        const smsQ = query(collection(db, 'raw_sms'), where('userId', '==', userId), orderBy('timestamp', 'desc'), limit(100));
+        const smsSnap = await getDocs(smsQ);
+        
+        for (const smsDoc of smsSnap.docs) {
+          const smsText = smsDoc.data().message || "";
+          if (smsText.toUpperCase().includes(trxId)) {
+             // We found the TrxID in an SMS message that might not have been matched yet
+             // Check if amount matches in text (very basic check)
+             if (smsText.includes(amount.toString()) || smsText.replace(/,/g, '').includes(amount.toString())) {
+                console.log(`[RESCAN MATCH] Found TrxID ${trxId} in raw SMS body.`);
+                if (isSystem) {
+                  await updateDoc(doc(db, 'userDeposits', pendingDoc.id), {
+                    status: 'approved',
+                    matchedAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString(),
+                    matchingNote: 'Matched from Raw SMS logs'
+                  });
+                  await updateDoc(doc(db, 'users', userId), { balance: increment(amount) });
+                } else {
+                  await updateDoc(doc(db, 'depositRequests', pendingDoc.id), {
+                    status: 'matched',
+                    matchedAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString(),
+                    matchingNote: 'Matched from Raw SMS logs'
+                  });
+                }
+                return true;
+             }
+          }
+        }
+
+        return false;
+      };
+
+      // Execute scans
+      const pendingSystemSnap = await getDocs(query(collection(db, 'userDeposits'), where('status', '==', 'pending')));
+      for (const d of pendingSystemSnap.docs) {
+        if (await tryMatch(d, true)) matchedCount++;
+      }
+
+      const pendingMerchantSnap = await getDocs(query(collection(db, 'depositRequests'), where('status', '==', 'pending')));
+      for (const d of pendingMerchantSnap.docs) {
+        if (await tryMatch(d, false)) matchedCount++;
+      }
+
+      // Update All Devices Statuses to 'offline' if not seen for 30 minutes
+      const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+      const onlineDevicesQ = query(collection(db, 'devices'), where('status', '==', 'online'));
+      const onlineDevicesSnap = await getDocs(onlineDevicesQ);
+      for (const d of onlineDevicesSnap.docs) {
+        const lastSeen = d.data().lastSeen || d.data().lastActive;
+        if (!lastSeen || lastSeen < thirtyMinsAgo) {
+          await updateDoc(doc(db, 'devices', d.id), { status: 'offline' });
         }
       }
 
-      res.json({ success: true, matchedCount });
+      res.json({ success: true, matchedCount, message: `Auto-matching complete. ${matchedCount} deposits resolved.` });
     } catch (error) {
-      console.error(error);
+      console.error("Rescan Error:", error);
       res.status(500).json({ error: "Rescan failed" });
     }
   });
@@ -384,6 +445,29 @@ async function startServer() {
 
         const txRef = await addDoc(collection(db, 'transactions'), txData);
         await updateDoc(doc(db, 'raw_sms', rawSmsRef.id), { status: 'processed', transactionId: txRef.id });
+
+        // Update Device Status (Upsert)
+        if (deviceId && deviceId !== 'gateway_api') {
+          const dRef = query(collection(db, 'devices'), where('deviceId', '==', deviceId), limit(1));
+          const dSnap = await getDocs(dRef);
+          if (!dSnap.empty) {
+            await updateDoc(doc(db, 'devices', dSnap.docs[0].id), {
+              lastSeen: new Date().toISOString(),
+              status: 'online'
+            });
+          } else {
+            // New device seen via SMS
+            await addDoc(collection(db, 'devices'), {
+              userId,
+              deviceId,
+              deviceName: provider || "SMS Gateway",
+              model: "Android", 
+              status: 'online',
+              lastSeen: new Date().toISOString(),
+              createdAt: new Date().toISOString()
+            });
+          }
+        }
 
         // 6. Intelligent Matching Engine
         const depositRef = collection(db, 'depositRequests');
@@ -594,13 +678,13 @@ async function startServer() {
 
       const deviceData = {
         userId,
-        name: deviceName || model || "Unknown Device",
+        deviceName: deviceName || model || "Unknown Device",
         deviceId: cleanDeviceId || `DEV_${Math.random().toString(36).substring(7).toUpperCase()}`,
         deviceToken: `TOK_${Math.random().toString(36).substring(2, 10).toUpperCase()}`,
         model: model || "Unknown",
         version: version || "1.0.0",
         status: "online",
-        lastActive: new Date().toISOString(),
+        lastSeen: new Date().toISOString(),
       };
 
       if (deviceSnap && !deviceSnap.empty) {
@@ -616,7 +700,7 @@ async function startServer() {
         message: "ডিভাইসটি সফলভাবে কানেক্ট করা হয়েছে",
         data: {
           userId,
-          deviceName: deviceData.name,
+          deviceName: deviceData.deviceName,
           deviceId: deviceData.deviceId
         }
       });

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { collection, query, orderBy, onSnapshot, doc, updateDoc, getDoc, addDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { UserDeposit, UserProfile } from '../types';
-import { Check, X, Clock, User, CreditCard, ExternalLink, Loader2, Search } from 'lucide-react';
+import { Check, X, Clock, User, CreditCard, ExternalLink, Loader2, Search, RefreshCcw } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
 import { format } from 'date-fns';
 

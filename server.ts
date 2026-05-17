@@ -163,6 +163,7 @@ async function startServer() {
 
   // Admin: Rescan all pending deposits (both system deposits and merchant requests)
   app.post("/api/v1/admin/rescan-deposits", async (req, res) => {
+    console.log("[RESCAN] Starting global rescan...");
     try {
       let matchedCount = 0;
 
@@ -175,19 +176,23 @@ async function startServer() {
 
         if (!trxId || !amount) return false;
 
-        // 1. Check existing transactions
+        console.log(`[RESCAN] Checking ${isSystem ? 'System' : 'Merchant'} deposit: ${trxId} (${amount} TK) for user: ${userId}`);
+
+        // 1. Check existing transactions (Global check first)
         let txQ = query(collection(db, 'transactions'), where('trxId', '==', trxId), limit(1));
         let txSnap = await getDocs(txQ);
 
         if (!txSnap.empty) {
           const txData = txSnap.docs[0].data();
-          if (Math.abs(txData.amount - amount) < 0.1) {
-            // Found in transactions!
+          // Precise match on amount
+          if (Math.abs(Number(txData.amount) - Number(amount)) < 0.1) {
+            console.log(`[RESCAN MATCH] Found in transactions: ${trxId}`);
             if (isSystem) {
               await updateDoc(doc(db, 'userDeposits', pendingDoc.id), {
                 status: 'approved',
                 matchedAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
+                updatedAt: new Date().toISOString(),
+                matchingNote: 'Auto-matched during Rescan'
               });
               await updateDoc(doc(db, 'users', userId), { balance: increment(amount) });
             } else {
@@ -195,31 +200,34 @@ async function startServer() {
                 status: 'matched',
                 matchedAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
-                matchedTransactionId: txSnap.docs[0].id
+                matchedTransactionId: txSnap.docs[0].id,
+                matchingNote: 'Auto-matched during Rescan'
               });
             }
             return true;
+          } else {
+            console.log(`[RESCAN MISMATCH] TrxID matches but amount differs: TX=${txData.amount} vs REQ=${amount}`);
           }
         }
 
-        // 2. Fallback: Check raw_sms for un-extracted TrxIDs
-        // This is "powerful" matching - searching message bodies directly
-        const smsQ = query(collection(db, 'raw_sms'), where('userId', '==', userId), orderBy('timestamp', 'desc'), limit(100));
+        // 2. Powerful search: Check raw_sms (Generic search across last 200 logs)
+        // No orderBy to avoid index errors
+        const smsQ = query(collection(db, 'raw_sms'), limit(200));
         const smsSnap = await getDocs(smsQ);
         
         for (const smsDoc of smsSnap.docs) {
-          const smsText = smsDoc.data().message || "";
-          if (smsText.toUpperCase().includes(trxId)) {
-             // We found the TrxID in an SMS message that might not have been matched yet
-             // Check if amount matches in text (very basic check)
-             if (smsText.includes(amount.toString()) || smsText.replace(/,/g, '').includes(amount.toString())) {
-                console.log(`[RESCAN MATCH] Found TrxID ${trxId} in raw SMS body.`);
+          const smsText = (smsDoc.data().message || "").toUpperCase();
+          if (smsText.includes(trxId)) {
+             // Basic amount check in text
+             const amtStr = amount.toString();
+             if (smsText.includes(amtStr)) {
+                console.log(`[RESCAN MATCH] Found TrxID ${trxId} in raw SMS body log.`);
                 if (isSystem) {
                   await updateDoc(doc(db, 'userDeposits', pendingDoc.id), {
                     status: 'approved',
                     matchedAt: new Date().toISOString(),
                     updatedAt: new Date().toISOString(),
-                    matchingNote: 'Matched from Raw SMS logs'
+                    matchingNote: 'Matched from Raw SMS body during rescan'
                   });
                   await updateDoc(doc(db, 'users', userId), { balance: increment(amount) });
                 } else {
@@ -227,7 +235,7 @@ async function startServer() {
                     status: 'matched',
                     matchedAt: new Date().toISOString(),
                     updatedAt: new Date().toISOString(),
-                    matchingNote: 'Matched from Raw SMS logs'
+                    matchingNote: 'Matched from Raw SMS body during rescan'
                   });
                 }
                 return true;
@@ -238,32 +246,47 @@ async function startServer() {
         return false;
       };
 
-      // Execute scans
+      // Execute scans for System Deposits
       const pendingSystemSnap = await getDocs(query(collection(db, 'userDeposits'), where('status', '==', 'pending')));
+      console.log(`[RESCAN] Found ${pendingSystemSnap.size} pending System deposits.`);
       for (const d of pendingSystemSnap.docs) {
-        if (await tryMatch(d, true)) matchedCount++;
-      }
-
-      const pendingMerchantSnap = await getDocs(query(collection(db, 'depositRequests'), where('status', '==', 'pending')));
-      for (const d of pendingMerchantSnap.docs) {
-        if (await tryMatch(d, false)) matchedCount++;
-      }
-
-      // Update All Devices Statuses to 'offline' if not seen for 30 minutes
-      const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-      const onlineDevicesQ = query(collection(db, 'devices'), where('status', '==', 'online'));
-      const onlineDevicesSnap = await getDocs(onlineDevicesQ);
-      for (const d of onlineDevicesSnap.docs) {
-        const lastSeen = d.data().lastSeen || d.data().lastActive;
-        if (!lastSeen || lastSeen < thirtyMinsAgo) {
-          await updateDoc(doc(db, 'devices', d.id), { status: 'offline' });
+        try {
+          if (await tryMatch(d, true)) matchedCount++;
+        } catch (err) {
+          console.error(`[RESCAN ERROR] Failed processing system deposit ${d.id}:`, err);
         }
       }
 
+      // Execute scans for Merchant Requests
+      const pendingMerchantSnap = await getDocs(query(collection(db, 'depositRequests'), where('status', '==', 'pending')));
+      console.log(`[RESCAN] Found ${pendingMerchantSnap.size} pending Merchant requests.`);
+      for (const d of pendingMerchantSnap.docs) {
+        try {
+          if (await tryMatch(d, false)) matchedCount++;
+        } catch (err) {
+          console.error(`[RESCAN ERROR] Failed processing merchant request ${d.id}:`, err);
+        }
+      }
+
+      // Quick device status update while we are here
+      try {
+        const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+        const onlineDevicesSnap = await getDocs(query(collection(db, 'devices'), where('status', '==', 'online')));
+        for (const d of onlineDevicesSnap.docs) {
+          const lastSeen = d.data().lastSeen || d.data().lastActive;
+          if (!lastSeen || lastSeen < thirtyMinsAgo) {
+            await updateDoc(doc(db, 'devices', d.id), { status: 'offline' });
+          }
+        }
+      } catch (err) {
+        console.error("[RESCAN] Device status update failed:", err);
+      }
+
+      console.log(`[RESCAN] Completed. ${matchedCount} total matches found.`);
       res.json({ success: true, matchedCount, message: `Auto-matching complete. ${matchedCount} deposits resolved.` });
-    } catch (error) {
-      console.error("Rescan Error:", error);
-      res.status(500).json({ error: "Rescan failed" });
+    } catch (error: any) {
+      console.error("Rescan Fatal Error:", error);
+      res.status(500).json({ error: "Rescan failed", details: error.message });
     }
   });
 

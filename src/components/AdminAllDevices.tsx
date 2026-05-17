@@ -13,9 +13,17 @@ export default function AdminAllDevices() {
   const [processingId, setProcessingId] = useState<string | null>(null);
 
   useEffect(() => {
-    const q = query(collection(db, 'devices'), orderBy('lastSeen', 'desc'));
+    // Remove orderBy to avoid excluding documents missing the lastSeen field
+    const q = query(collection(db, 'devices'));
     const unsub = onSnapshot(q, (snap) => {
-      setDevices(snap.docs.map(d => ({ id: d.id, ...d.data() } as Device)));
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as Device));
+      // Sort in memory instead
+      docs.sort((a, b) => {
+        const dateA = new Date(a.lastSeen || (a as any).lastActive || 0).getTime();
+        const dateB = new Date(b.lastSeen || (b as any).lastActive || 0).getTime();
+        return dateB - dateA;
+      });
+      setDevices(docs);
       setLoading(false);
     });
     return unsub;

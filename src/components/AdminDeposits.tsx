@@ -61,6 +61,25 @@ export default function AdminDeposits() {
   const [manualAmount, setManualAmount] = useState('');
   const [manualUserId, setManualUserId] = useState('');
   const [addingFund, setAddingFund] = useState(false);
+  const [rescanning, setRescanning] = useState(false);
+
+  const handleRescan = async () => {
+    setRescanning(true);
+    try {
+      const res = await fetch('/api/v1/admin/rescan-deposits', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        alert(`Auto-matching complete! ${data.matchedCount} deposits matched.`);
+      } else {
+        alert("Rescan failed.");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Error during rescan.");
+    } finally {
+      setRescanning(false);
+    }
+  };
 
   const handleManualAdd = async () => {
     if (!manualUserId || !manualAmount) return;
@@ -142,15 +161,25 @@ export default function AdminDeposits() {
           <Clock className="w-5 h-5 text-blue-600" />
           Deposit Requests
         </h3>
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input 
-            type="text" 
-            placeholder="Search TrxID or User..." 
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none w-full sm:w-64"
-          />
+        <div className="flex gap-4">
+          <button 
+            onClick={handleRescan}
+            disabled={rescanning}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-600 rounded-lg text-sm font-bold hover:bg-blue-100 transition-all disabled:opacity-50"
+          >
+            {rescanning ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
+            {rescanning ? 'Matching...' : 'Trigger Auto-Match'}
+          </button>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input 
+              type="text" 
+              placeholder="Search TrxID or User..." 
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none w-full sm:w-64"
+            />
+          </div>
         </div>
       </div>
 

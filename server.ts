@@ -107,6 +107,105 @@ async function startServer() {
     }
   });
 
+  // System Billing: Create Deposit Request for Adding Funds (with retroactive match check)
+  app.post("/api/v1/user-deposit", async (req, res) => {
+    const { userId, userName, method, amount, trxId } = req.body;
+    if (!userId || !amount || !trxId) return res.status(400).json({ error: "Missing fields" });
+
+    const cleanTrxId = trxId.toUpperCase().trim();
+    const cleanAmount = parseFloat(amount);
+
+    try {
+      // 1. Check if this transaction was already received by the admin
+      // Since it's a deposit to the SYSTEM, we look for transactions belonging to ADMINS
+      // or just search ALL transactions for this TrxID that match the amount.
+      const txq = query(collection(db, 'transactions'), where('trxId', '==', cleanTrxId), limit(1));
+      const txSnap = await getDocs(txq);
+
+      let status = 'pending';
+      let matchedAt = null;
+
+      if (!txSnap.empty) {
+        const txData = txSnap.docs[0].data();
+        if (txData.amount === cleanAmount) {
+          status = 'approved';
+          matchedAt = new Date().toISOString();
+        }
+      }
+
+      // 2. Save the deposit request
+      const depositRef = await addDoc(collection(db, 'userDeposits'), {
+        userId,
+        userName,
+        method,
+        amount: cleanAmount,
+        trxId: cleanTrxId,
+        status,
+        matchedAt,
+        createdAt: new Date().toISOString()
+      });
+
+      // 3. If auto-approved, increment balance
+      if (status === 'approved') {
+        const userRef = doc(db, 'users', userId);
+        await updateDoc(userRef, {
+          balance: increment(cleanAmount)
+        });
+        console.log(`[RETRO-TOPUP] Auto-approved existing transaction for user: ${userId}`);
+      }
+
+      res.json({ status, requestId: depositRef.id });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Admin: Rescan all pending deposits for matches in transaction history
+  app.post("/api/v1/admin/rescan-deposits", async (req, res) => {
+    try {
+      const pendingQ = query(collection(db, 'userDeposits'), where('status', '==', 'pending'));
+      const pendingSnap = await getDocs(pendingQ);
+      
+      let matchedCount = 0;
+
+      for (const pendingDoc of pendingSnap.docs) {
+        const data = pendingDoc.data();
+        const trxId = data.trxId;
+        const amount = data.amount;
+
+        if (trxId) {
+          // Look for matching transaction
+          const txQ = query(collection(db, 'transactions'), where('trxId', '==', trxId), limit(1));
+          const txSnap = await getDocs(txQ);
+
+          if (!txSnap.empty) {
+            const txData = txSnap.docs[0].data();
+            if (Math.abs(txData.amount - amount) < 0.1) {
+              // Match found!
+              await updateDoc(doc(db, 'userDeposits', pendingDoc.id), {
+                status: 'approved',
+                matchedAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+              });
+
+              await updateDoc(doc(db, 'users', data.userId), {
+                balance: increment(amount)
+              });
+
+              matchedCount++;
+            }
+          }
+        }
+      }
+
+      res.json({ success: true, matchedCount });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Rescan failed" });
+    }
+  });
+
   // Transaction extraction API (Simulating the endpoint for the Android App)
   app.post("/api/v1/extract-sms", async (req, res) => {
     const { message } = req.body;

@@ -78,17 +78,24 @@ export default function Billing({ profile, onUpgrade }: BillingProps) {
     if (!profile || !selectedMethod || !amount || !trxId) return;
     setLoading(true);
     try {
-      await addDoc(collection(db, 'userDeposits'), {
-        userId: profile.id,
-        userName: profile.name,
-        method: selectedMethod,
-        amount: parseFloat(amount),
-        trxId,
-        status: 'pending',
-        createdAt: new Date().toISOString(), // Use simple ISO string for now or serverTimestamp
-        serverCreatedAt: serverTimestamp()
+      const res = await fetch('/api/v1/user-deposit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: profile.id,
+          userName: profile.name,
+          method: selectedMethod,
+          amount: parseFloat(amount),
+          trxId: trxId.trim().toUpperCase()
+        })
       });
-      setStep('success');
+
+      if (res.ok) {
+        setStep('success');
+      } else {
+        const err = await res.json();
+        alert(err.error || "Failed to submit deposit");
+      }
     } catch (e) {
       console.error(e);
       alert("Something went wrong. Please try again.");

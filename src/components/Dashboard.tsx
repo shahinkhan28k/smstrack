@@ -9,6 +9,7 @@ import SettingsPanel from './SettingsPanel';
 import Billing from './Billing';
 import MyDeposits from './MyDeposits';
 import UserAllLogs from './UserAllLogs';
+import IntegrationGuide from './IntegrationGuide';
 import AdminDeposits from './AdminDeposits';
 import AdminSystemConfig from './AdminSystemConfig';
 import AdminPlans from './AdminPlans';
@@ -36,12 +37,13 @@ import {
   Zap,
   Users,
   History,
-  Activity
+  Activity,
+  Code2
 } from 'lucide-react';
 import { collection, addDoc, updateDoc, doc, onSnapshot, query, orderBy, getDoc, where, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 
-type Tab = 'overview' | 'transactions' | 'logs' | 'billing' | 'deposits' | 'devices' | 'settings' | 'admin-deposits' | 'admin-config' | 'admin-plans' | 'admin-users' | 'admin-devices' | 'admin-history';
+type Tab = 'overview' | 'transactions' | 'logs' | 'integration' | 'billing' | 'deposits' | 'devices' | 'settings' | 'admin-deposits' | 'admin-config' | 'admin-plans' | 'admin-users' | 'admin-devices' | 'admin-history';
 
 interface DashboardProps {
   user: User;
@@ -188,6 +190,7 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'transactions', label: 'History', icon: ListOrdered },
     { id: 'logs', label: 'Incoming Logs', icon: Activity },
+    { id: 'integration', label: 'Integration', icon: Code2 },
     { id: 'billing', label: 'Add Funds', icon: CreditCard },
     { id: 'deposits', label: 'My Deposits', icon: Wallet },
     { id: 'devices', label: 'Devices', icon: Smartphone },
@@ -513,6 +516,9 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
             )}
             {activeTab === 'logs' && (
               <UserAllLogs logs={rawSMS} loading={false} />
+            )}
+            {activeTab === 'integration' && (
+              <IntegrationGuide apiKey={profile?.apiKey || ''} apiSecret={profile?.apiSecret || ''} />
             )}
             {activeTab === 'billing' && (
               <Billing profile={profile} onUpgrade={() => setShowUpgradeModal(true)} />

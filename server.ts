@@ -61,6 +61,34 @@ async function startServer() {
     }
   });
 
+  // Public: Fetch Deposit Request Info for Checkout Page
+  app.get("/api/v1/checkout-info/:requestId", async (req, res) => {
+    const { requestId } = req.params;
+    try {
+      const docSnap = await getDocs(query(collection(db, 'depositRequests'), where('__name__', '==', requestId), limit(1)));
+      if (docSnap.empty) {
+        return res.status(404).json({ error: "Request not found" });
+      }
+      const data = docSnap.docs[0].data();
+      
+      // Fetch merchant name
+      const userSnap = await getDocs(query(collection(db, 'users'), where('__name__', '==', data.userId), limit(1)));
+      const merchant = userSnap.empty ? "Merchant" : userSnap.docs[0].data().name;
+
+      // Only return necessary public info
+      res.json({
+        status: data.status,
+        amount: data.amount,
+        provider: data.provider,
+        externalId: data.externalId,
+        merchantName: merchant,
+        merchantNumber: userSnap.empty ? "Contact Business" : (userSnap.docs[0].data()[`${data.provider.toLowerCase()}Number`] || "Not Set")
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Server error" });
+    }
+  });
+
   // Transaction extraction API (Simulating the endpoint for the Android App)
   app.post("/api/v1/extract-sms", async (req, res) => {
     const { message } = req.body;

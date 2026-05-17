@@ -31,6 +31,9 @@ export default function SettingsPanel({ profile, onRefresh, onShowUpgrade }: Set
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [webhookUrl, setWebhookUrl] = useState(profile?.webhookUrl || '');
+  const [bkashNumber, setBkashNumber] = useState(profile?.bkashNumber || '');
+  const [nagadNumber, setNagadNumber] = useState(profile?.nagadNumber || '');
+  const [rocketNumber, setRocketNumber] = useState(profile?.rocketNumber || '');
   const [testSms, setTestSms] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState<any>(null);
@@ -89,7 +92,10 @@ export default function SettingsPanel({ profile, onRefresh, onShowUpgrade }: Set
     setLoading(true);
     try {
       await updateDoc(doc(db, 'users', profile.id), {
-        webhookUrl
+        webhookUrl,
+        bkashNumber,
+        nagadNumber,
+        rocketNumber
       });
       await onRefresh();
       alert('Settings saved successfully!');
@@ -105,6 +111,59 @@ export default function SettingsPanel({ profile, onRefresh, onShowUpgrade }: Set
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Profile Card */}
         <div className="lg:col-span-2 space-y-8">
+          {/* Merchant Account Numbers */}
+          <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <Wallet className="w-5 h-5 text-blue-600" />
+                Merchant Numbers (আপনার মোবাইল নম্বরগুলো দিন)
+              </h3>
+            </div>
+            <p className="text-xs text-gray-500 mb-6">আপনার শপিং ওয়েবসাইটের কাস্টমাররা পেমেন্ট করার জন্য এই নম্বরগুলো চেকআউট পেজে দেখতে পাবে।</p>
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">bKash Personal</label>
+                <input 
+                  type="text" 
+                  value={bkashNumber}
+                  onChange={(e) => setBkashNumber(e.target.value)}
+                  placeholder="017XXXXXXXX"
+                  className="w-full px-4 py-3 bg-gray-50 rounded-xl border border-gray-100 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Nagad Personal</label>
+                <input 
+                  type="text" 
+                  value={nagadNumber}
+                  onChange={(e) => setNagadNumber(e.target.value)}
+                  placeholder="017XXXXXXXX"
+                  className="w-full px-4 py-3 bg-gray-50 rounded-xl border border-gray-100 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Rocket Personal</label>
+                <input 
+                  type="text" 
+                  value={rocketNumber}
+                  onChange={(e) => setRocketNumber(e.target.value)}
+                  placeholder="017XXXXXXXX"
+                  className="w-full px-4 py-3 bg-gray-50 rounded-xl border border-gray-100 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end">
+              <button 
+                onClick={handleSaveProfile}
+                disabled={loading}
+                className="px-6 py-3 bg-gray-900 text-white text-xs font-bold rounded-xl hover:bg-black transition-all flex items-center gap-2"
+              >
+                Save Numbers
+              </button>
+            </div>
+          </div>
+
           <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm">
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">

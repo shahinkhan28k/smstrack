@@ -5,14 +5,23 @@ import { userService } from './lib/services';
 import { UserProfile } from './types';
 import Landing from './components/Landing';
 import Dashboard from './components/Dashboard';
+import CheckoutPage from './components/CheckoutPage';
 import { Loader2 } from 'lucide-react';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isCheckout, setIsCheckout] = useState(false);
 
   useEffect(() => {
+    // Check for checkout route
+    if (window.location.pathname.startsWith('/checkout/')) {
+      setIsCheckout(true);
+      setLoading(false);
+      return;
+    }
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
       if (firebaseUser) {
@@ -46,6 +55,10 @@ export default function App() {
         <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
       </div>
     );
+  }
+
+  if (isCheckout) {
+    return <CheckoutPage />;
   }
 
   if (!user) {

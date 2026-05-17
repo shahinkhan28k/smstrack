@@ -16,11 +16,20 @@ export default function CheckoutPage() {
     if (id && id !== 'checkout') {
       setRequestId(id);
       fetchInfo(id);
+      
+      // Auto-polling for status check
+      const interval = setInterval(() => {
+        if (data?.status !== 'matched') {
+          fetchInfo(id);
+        }
+      }, 5000);
+      
+      return () => clearInterval(interval);
     } else {
       setError('Invalid Request ID');
       setLoading(false);
     }
-  }, []);
+  }, [data?.status]);
 
   const fetchInfo = async (id: string) => {
     try {
@@ -28,11 +37,15 @@ export default function CheckoutPage() {
       const json = await res.json();
       if (res.ok) {
         setData(json);
+        // If it just matched, we can stop any submitting state
+        if (json.status === 'matched') {
+          setSubmitting(false);
+        }
       } else {
         setError(json.error || 'Failed to load checkout info');
       }
     } catch (e) {
-      setError('Connection error');
+      console.error('Polling error:', e);
     } finally {
       setLoading(false);
     }
@@ -41,12 +54,22 @@ export default function CheckoutPage() {
   const verifyTrx = async () => {
     if (!trxId || trxId.length < 5) return;
     setSubmitting(true);
-    // In a real gateway, we might have a specific verify endpoint
-    // For now, the customer just waits for the SMS to reach the server.
-    // We can simulate progress or just poll for status.
+    
+    // We send the TrxID to the server to "help" the matching engine
+    // though the SMS app will usually be the primary driver.
+    try {
+      await fetch(`/api/v1/update-trxid/${requestId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trxId })
+      });
+    } catch (e) {
+      console.error('Update TrxID error:', e);
+    }
+
+    // After manual input, we wait a bit and poll again
     setTimeout(() => {
-      setSubmitting(false);
-      fetchInfo(requestId!); // Re-fetch to see if status updated
+      fetchInfo(requestId!);
     }, 2000);
   };
 

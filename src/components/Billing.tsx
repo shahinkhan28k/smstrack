@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { CreditCard, Smartphone, Check, Zap, ArrowRight, ShieldCheck, Copy, RefreshCcw, Loader2, Info } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
 import { Plan, SystemConfig, UserProfile } from '../types';
-import { doc, getDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, addDoc, collection, serverTimestamp, query, where, orderBy, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 
 interface BillingProps {
@@ -12,6 +12,15 @@ interface BillingProps {
 
 type DepositStep = 'method' | 'amount' | 'trxid' | 'success';
 
+interface UserDeposit {
+  id: string;
+  amount: number;
+  method: string;
+  trxId: string;
+  status: 'pending' | 'approved' | 'rejected';
+  createdAt: string;
+}
+
 export default function Billing({ profile, onUpgrade }: BillingProps) {
   const [step, setStep] = useState<DepositStep>('method');
   const [selectedMethod, setSelectedMethod] = useState<'bKash' | 'Nagad' | 'Rocket' | null>(null);
@@ -20,6 +29,7 @@ export default function Billing({ profile, onUpgrade }: BillingProps) {
   const [loading, setLoading] = useState(false);
   const [config, setConfig] = useState<SystemConfig | null>(null);
   const [copied, setCopied] = useState(false);
+  const [history, setHistory] = useState<UserDeposit[]>([]);
 
   useEffect(() => {
     const fetchConfig = async () => {
@@ -34,6 +44,23 @@ export default function Billing({ profile, onUpgrade }: BillingProps) {
     };
     fetchConfig();
   }, []);
+
+  useEffect(() => {
+    if (!profile) return;
+
+    const q = query(
+      collection(db, 'userDeposits'),
+      where('userId', '==', profile.id),
+      orderBy('createdAt', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(q, (snap) => {
+      const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as UserDeposit));
+      setHistory(docs);
+    });
+
+    return () => unsubscribe();
+  }, [profile?.id]);
 
   const paymentMethods = [
     { id: 'bKash', name: 'bKash', color: 'bg-pink-600', icon: 'https://searchlogotype.com/wp-content/uploads/2020/03/bkash-logo-vector-400x400.png' },
@@ -271,6 +298,78 @@ export default function Billing({ profile, onUpgrade }: BillingProps) {
               </button>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Deposit Tracking History */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="p-8 border-b border-gray-50 flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-bold text-gray-900 font-display">Deposit Tracking</h3>
+            <p className="text-xs text-gray-500 mt-1">আপনার সাম্প্রতিক ডিপোজিটগুলোর অবস্থা এখান থেকে দেখুন</p>
+          </div>
+          <RefreshCcw className="w-5 h-5 text-gray-300 pointer-events-none" />
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                <th className="px-8 py-4">Transaction Details</th>
+                <th className="px-8 py-4">Amount</th>
+                <th className="px-8 py-4">Status</th>
+                <th className="px-8 py-4">Date</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {history.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-8 py-20 text-center text-gray-400 text-sm italic">
+                    কোনো ডিপোজিট হিস্টরি পাওয়া যায়নি
+                  </td>
+                </tr>
+              ) : (
+                history.map((item) => (
+                  <tr key={item.id} className="hover:bg-gray-50/50 transition-colors">
+                    <td className="px-8 py-6">
+                      <div className="flex items-center gap-3">
+                        <div className={cn(
+                          "w-10 h-10 rounded-xl flex items-center justify-center text-white",
+                          item.method === 'bKash' ? 'bg-pink-600' : item.method === 'Nagad' ? 'bg-orange-500' : 'bg-purple-700'
+                        )}>
+                          <Smartphone className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="text-sm font-bold text-gray-900">{item.method} Deposit</div>
+                          <div className="text-[10px] font-mono text-gray-400 mt-0.5">TrxID: {item.trxId}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-8 py-6">
+                      <span className="text-sm font-black text-gray-900">{formatCurrency(item.amount)}</span>
+                    </td>
+                    <td className="px-8 py-6">
+                      <span className={cn(
+                        "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border",
+                        item.status === 'approved' ? "bg-emerald-50 text-emerald-600 border-emerald-100" :
+                        item.status === 'rejected' ? "bg-red-50 text-red-600 border-red-100" :
+                        "bg-amber-50 text-amber-600 border-amber-100 animate-pulse"
+                      )}>
+                        {item.status === 'approved' ? 'Matched' : item.status === 'rejected' ? 'Rejected' : 'Checking...'}
+                      </span>
+                    </td>
+                    <td className="px-8 py-6">
+                      <div className="text-xs text-gray-500">
+                        {new Date(item.createdAt).toLocaleDateString()}
+                      </div>
+                      <div className="text-[10px] text-gray-300">
+                        {new Date(item.createdAt).toLocaleTimeString()}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

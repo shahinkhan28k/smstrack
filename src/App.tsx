@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { db, auth, loginWithGoogle, logout } from './lib/firebase';
 import { userService } from './lib/services';
 import { UserProfile } from './types';
@@ -37,18 +37,23 @@ export default function App() {
       if (firebaseUser) {
         // Initial setup/check
         const existingProfile = await userService.getProfile(firebaseUser.uid);
+        const isAdminEmail = firebaseUser.email === 'shahinkhan28p@gmail.com';
+
         if (!existingProfile) {
           const newProfile: UserProfile = {
             id: firebaseUser.uid,
             name: firebaseUser.displayName || 'User',
             email: firebaseUser.email || '',
-            role: 'user',
+            role: isAdminEmail ? 'admin' : 'user',
             plan: 'free',
             balance: 0,
             status: 'active',
             createdAt: new Date().toISOString()
           };
           await userService.createProfile(newProfile);
+        } else if (isAdminEmail && existingProfile.role !== 'admin') {
+          // Auto-upgrade existing profile to admin if email matches
+          await updateDoc(doc(db, 'users', firebaseUser.uid), { role: 'admin' });
         }
 
         // Real-time listener

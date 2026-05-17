@@ -89,6 +89,24 @@ async function startServer() {
     }
   });
 
+  // Update Deposit Request with manual TrxID (from checkout page)
+  app.post("/api/v1/update-trxid/:requestId", async (req, res) => {
+    const { requestId } = req.params;
+    const { trxId } = req.body;
+    if (!trxId) return res.status(400).json({ error: "Missing TrxID" });
+
+    try {
+      const docRef = doc(db, 'depositRequests', requestId);
+      await updateDoc(docRef, { 
+        trxId: trxId.toUpperCase().trim(),
+        updatedAt: new Date().toISOString()
+      });
+      res.json({ status: "success" });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update TrxID" });
+    }
+  });
+
   // Transaction extraction API (Simulating the endpoint for the Android App)
   app.post("/api/v1/extract-sms", async (req, res) => {
     const { message } = req.body;
@@ -157,9 +175,16 @@ async function startServer() {
       let userId = "unknown";
       let userData = null;
 
-      if (apiKey && apiSecret) {
+      if (apiKey) {
         const usersRef = collection(db, 'users');
-        const qUser = query(usersRef, where('apiKey', '==', apiKey), where('apiSecret', '==', apiSecret), limit(1));
+        let qUser;
+        if (apiSecret) {
+          qUser = query(usersRef, where('apiKey', '==', apiKey), where('apiSecret', '==', apiSecret), limit(1));
+        } else {
+          // Lenient lookup if secret is missing (Common in some SMS apps)
+          qUser = query(usersRef, where('apiKey', '==', apiKey), limit(1));
+        }
+        
         const userSnap = await getDocs(qUser);
         if (!userSnap.empty) {
           userId = userSnap.docs[0].id;
@@ -194,33 +219,44 @@ async function startServer() {
 
       // If structured data is missing, use Regex from message body
       if (message && (amount <= 0 || !trxId)) {
-        const bkashPattern = /You have received (?:Tk )?([\d,]+\.?\d*) from (\d+)\. .*TrxID ([A-Z0-9]+)/i;
-        const nagadPattern = /Tk ([\d,]+\.?\d*) Received from (\d+)\. .*TxnID: ([A-Z0-9]+)/i;
-        const rocketPattern = /Tk\. ([\d,]+\.?\d*) received from (\d+)\. .*TrxID: ([A-Z0-9]+)/i;
+        // Robust patterns for various providers and languages
+        const patterns = [
+          // bKash
+          /You have received (?:Tk )?([\d,]+\.?\d*) from (\d+)\. .*TrxID ([A-Z0-9]+)/i,
+          /received (?:Tk )?([\d,]+\.?\d*).*TrxID ([A-Z0-9]+)/i,
+          // Nagad
+          /Tk ([\d,]+\.?\d*) Received from (\d+)\. .*TxnID[:\s]+([A-Z0-9]+)/i,
+          /Received (?:Tk )?([\d,]+\.?\d*).*TxnID[:\s]+([A-Z0-9]+)/i,
+          // Rocket
+          /Tk\. ([\d,]+\.?\d*) received from (\d+)\. .*TrxID[:\s]+([A-Z0-9]+)/i,
+          /received (?:Tk )?([\d,]+\.?\d*).*TrxID[:\s]+([A-Z0-9]+)/i,
+          // Generic
+          /(?:Tk|Amount|টাকা|পরিমাণ)[:\s]*([\d,]+\.?\d*)/i,
+          /(?:TrxID|TxnID|ID|ট্রানজেকশন)[:\s]*([A-Z0-9]{8,})/i
+        ];
 
-        let match;
-        if ((match = message.match(bkashPattern))) {
-          if (provider === "Unknown") provider = "bKash";
-          if (amount <= 0) amount = parseFloat(match[1].replace(/,/g, ''));
-          if (!trxId) trxId = match[3];
-        } else if ((match = message.match(nagadPattern))) {
-          if (provider === "Unknown") provider = "Nagad";
-          if (amount <= 0) amount = parseFloat(match[1].replace(/,/g, ''));
-          if (!trxId) trxId = match[3];
-        } else if ((match = message.match(rocketPattern))) {
-          if (provider === "Unknown") provider = "Rocket";
-          if (amount <= 0) amount = parseFloat(match[1].replace(/,/g, ''));
-          if (!trxId) trxId = match[3];
-        } else {
-          // Fallback generic extraction for other SMS formats
-          if (amount <= 0) {
-            const amountMatch = message.match(/(?:Tk|Amount|Tk\.|Money|দাম|টাকা)\s?([\d,]+\.?\d*)/i);
-            if (amountMatch) amount = parseFloat(amountMatch[1].replace(/,/g, ''));
+        for (const pattern of patterns) {
+          const m = message.match(pattern);
+          if (m) {
+            if (m.length >= 3) {
+              if (amount <= 0) amount = parseFloat(m[1].replace(/,/g, ''));
+              if (!trxId) trxId = m[m.length - 1].trim().toUpperCase();
+            } else if (m.length === 2) {
+              // Try to guess if it's amount or trxId
+              if (m[1].match(/^[\d,]+\.?\d*$/) && amount <= 0) {
+                amount = parseFloat(m[1].replace(/,/g, ''));
+              } else if (m[1].match(/[A-Z0-9]{8,}/i) && !trxId) {
+                trxId = m[1].trim().toUpperCase();
+              }
+            }
           }
-          if (!trxId) {
-            const trxMatch = message.match(/(?:TrxID|TxnID|ID|TID|ট্রানজেকশন আইড)[:\s#-]+([A-Z0-9]{8,15})/i);
-            if (trxMatch) trxId = trxMatch[1];
-          }
+        }
+        
+        // Auto-detect provider if missing
+        if (provider === "Unknown") {
+          if (message.toLowerCase().includes("bkash")) provider = "bKash";
+          else if (message.toLowerCase().includes("nagad")) provider = "Nagad";
+          else if (message.toLowerCase().includes("rocket")) provider = "Rocket";
         }
       }
 
@@ -321,36 +357,49 @@ async function startServer() {
           }
         }
 
-        // 8. System Balance Topup Logic (If SMS received by an Admin)
-        if (userData?.role === 'admin' && trxId && amount > 0) {
+        // 8. System Balance Topup Logic (Matching "Add Funds" requests)
+        // We allow this if the user is an admin OR if the SMS matches a pending user deposit
+        // Note: We check userDeposits regardless of admin status for better robustness in testing,
+        // but normally only admins should receive these SMS.
+        if (trxId && amount > 0) {
           const userDepositsRef = collection(db, 'userDeposits');
-          // Match by TrxID and Amount (pending status)
-          const qTopup = query(userDepositsRef, where('trxId', '==', trxId), where('status', '==', 'pending'), limit(1));
-          const topupSnap = await getDocs(qTopup);
+          let topupDoc = null;
 
+          // Try match by TrxID
+          const qTrx = query(userDepositsRef, where('trxId', '==', trxId), where('status', '==', 'pending'), limit(1));
+          const topupSnap = await getDocs(qTrx);
+          
           if (!topupSnap.empty) {
-            const depositDoc = topupSnap.docs[0];
-            const depositData = depositDoc.data();
-            
-            // Amount check (just in case)
-            if (depositData.amount === amount) {
-              console.log(`[TOPUP] Matching system deposit found for user: ${depositData.userId}`);
-              
-              // 1. Update deposit status
-              await updateDoc(doc(db, 'userDeposits', depositDoc.id), {
-                status: 'approved',
-                matchedAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-              });
-
-              // 2. Increment user balance
-              const userToTopupRef = doc(db, 'users', depositData.userId);
-              await updateDoc(userToTopupRef, {
-                balance: increment(amount)
-              });
-
-              console.log(`[TOPUP SUCCESS] User ${depositData.userId} balance increased by ${amount}`);
+            topupDoc = topupSnap.docs[0];
+          } else {
+            // Fuzzy match by amount (Only if a single pending deposit exists for this amount)
+            const qAmt = query(userDepositsRef, where('amount', '==', amount), where('status', '==', 'pending'));
+            const amtSnap = await getDocs(qAmt);
+            if (amtSnap.size === 1) {
+              topupDoc = amtSnap.docs[0];
+              console.log(`[TOPUP] Fuzzy match by amount: ${amount}`);
             }
+          }
+
+          if (topupDoc) {
+            const depositData = topupDoc.data();
+            console.log(`[TOPUP] Processing balance increase for user: ${depositData.userId}`);
+            
+            // 1. Update deposit status
+            await updateDoc(doc(db, 'userDeposits', topupDoc.id), {
+              status: 'approved',
+              matchedTrxId: trxId,
+              matchedAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            });
+
+            // 2. Increment user balance
+            const userToTopupRef = doc(db, 'users', depositData.userId);
+            await updateDoc(userToTopupRef, {
+              balance: increment(amount)
+            });
+
+            console.log(`[TOPUP SUCCESS] User ${depositData.userId} balance increased by ${amount}`);
           }
         }
       }

@@ -13,9 +13,12 @@ export default function AdminAllTransactions() {
   const [filterType, setFilterType] = useState<'all' | 'credit' | 'debit'>('all');
 
   useEffect(() => {
-    const q = query(collection(db, 'transactions'), orderBy('timestamp', 'desc'), limit(500));
+    const q = query(collection(db, 'transactions'), limit(1000));
     const unsub = onSnapshot(q, (snap) => {
-      setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() } as Transaction)));
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as Transaction));
+      // Client-side sort
+      docs.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
+      setTransactions(docs.slice(0, 500));
       setLoading(false);
     });
     return unsub;

@@ -51,11 +51,13 @@ export default function Billing({ profile, onUpgrade }: BillingProps) {
     const q = query(
       collection(db, 'userDeposits'),
       where('userId', '==', profile.id),
-      orderBy('createdAt', 'desc')
+      // orderBy removed to avoid index requirement
     );
 
     const unsubscribe = onSnapshot(q, (snap) => {
       const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as UserDeposit));
+      // Sort client-side
+      docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       setHistory(docs);
     });
 

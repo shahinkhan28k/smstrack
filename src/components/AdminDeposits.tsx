@@ -13,9 +13,11 @@ export default function AdminDeposits() {
   const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
-    const q = query(collection(db, 'userDeposits'), orderBy('createdAt', 'desc'));
+    const q = query(collection(db, 'userDeposits'));
     const unsub = onSnapshot(q, (snap) => {
-      setDeposits(snap.docs.map(d => ({ id: d.id, ...d.data() } as UserDeposit)));
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as UserDeposit));
+      docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      setDeposits(docs);
       setLoading(false);
     });
     return unsub;

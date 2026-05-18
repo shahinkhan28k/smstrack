@@ -21,9 +21,12 @@ export default function AdminUsers() {
   });
 
   useEffect(() => {
-    const q = query(collection(db, 'users'), orderBy('createdAt', 'desc'));
+    const q = query(collection(db, 'users'));
     const unsub = onSnapshot(q, (snap) => {
-      setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() } as UserProfile)));
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as UserProfile));
+      // Client-side sort
+      docs.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      setUsers(docs);
       setLoading(false);
     });
     return unsub;

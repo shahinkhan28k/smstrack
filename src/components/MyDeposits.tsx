@@ -19,11 +19,13 @@ export default function MyDeposits({ profile }: MyDepositsProps) {
     const q = query(
       collection(db, 'userDeposits'), 
       where('userId', '==', profile.id),
-      orderBy('createdAt', 'desc')
+      // orderBy removed to avoid index requirement
     );
     
     const unsub = onSnapshot(q, (snap) => {
-      setDeposits(snap.docs.map(d => ({ id: d.id, ...d.data() } as UserDeposit)));
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as UserDeposit));
+      docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      setDeposits(docs);
       setLoading(false);
     }, (error) => {
       console.error("Error fetching deposits:", error);

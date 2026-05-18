@@ -12,9 +12,12 @@ export default function AdminAllLogs() {
   const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
-    const q = query(collection(db, 'raw_sms'), orderBy('timestamp', 'desc'), limit(200));
+    const q = query(collection(db, 'raw_sms'), limit(300));
     const unsub = onSnapshot(q, (snap) => {
-      setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() } as RawSMS)));
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as RawSMS));
+      // Client-side sort
+      docs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      setLogs(docs.slice(0, 200));
       setLoading(false);
     });
     return unsub;

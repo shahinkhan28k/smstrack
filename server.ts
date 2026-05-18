@@ -20,15 +20,27 @@ try {
   }
   
   const app = admin.apps[0];
-  if (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== "(default)") {
-    db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  const dbId = firebaseConfig.firestoreDatabaseId;
+  
+  if (dbId && dbId !== "(default)" && dbId.trim().length > 0) {
+    try {
+      db = getFirestore(app, dbId);
+    } catch (dbErr) {
+      console.error("Failed to init specific database ID, falling back to default:", dbErr);
+      db = admin.firestore();
+    }
   } else {
-    db = getFirestore(app);
+    db = admin.firestore();
   }
 } catch (e) {
   console.error("Firebase Admin Init Error:", e);
-  // Last resort fallback
   db = admin.firestore();
+}
+
+// Ensure db is defined
+if (!db) {
+    console.error("CRITICAL: Firebase DB initialization failed. Using mock or emergency fallback.");
+    // This should not happen with admin.firestore() fallback
 }
 
 const FieldValue = admin.firestore.FieldValue;
@@ -61,6 +73,27 @@ async function startServer() {
       
       const userId = userSnap.docs[0].id;
 
+      // Check if we already have this TrxID in transactions (Retroactive Match)
+      let status = 'pending';
+      let matchedAt = null;
+      let matchingNote = "";
+      let matchedTransactionId = null;
+
+      const cleanTrxId = (req.body.trxId || "").toUpperCase().trim();
+      if (cleanTrxId && cleanTrxId.length > 5 && !cleanTrxId.startsWith('EXT_')) {
+        const txSnap = await db.collection('transactions').where('trxId', '==', cleanTrxId).limit(1).get();
+        if (!txSnap.empty) {
+            const txDoc = txSnap.docs[0];
+            const txData = txDoc.data() as any;
+            if (txData.isUsed !== true && Math.abs(txData.amount - Number(amount)) < 0.1) {
+                status = 'matched';
+                matchedAt = new Date().toISOString();
+                matchingNote = "Auto-matched upon creation: Found existing transaction.";
+                matchedTransactionId = txDoc.id;
+            }
+        }
+      }
+
       const docRef = await db.collection('depositRequests').add({
         userId,
         amount: Number(amount),
@@ -68,11 +101,28 @@ async function startServer() {
         provider: provider || "Unknown",
         webhookUrl: webhookUrl || "",
         externalId: externalId || "",
-        status: 'pending',
+        status,
+        matchedAt,
+        matchingNote,
+        matchedTransactionId,
+        trxId: cleanTrxId,
         createdAt: new Date().toISOString()
       });
 
-      res.json({ status: "success", requestId: docRef.id });
+      if (status === 'matched' && matchedTransactionId) {
+          // Mark transaction as used
+          await db.collection('transactions').doc(matchedTransactionId).update({
+              isUsed: true,
+              matchedAt: new Date().toISOString(),
+              matchedTo: docRef.id
+          });
+          
+          // Trigger webhook
+          const reqData = { webhookUrl, externalId, userId };
+          notifyMerchant(userId, docRef.id, reqData, Number(amount), cleanTrxId, "Matched from History", provider || "Unknown");
+      }
+
+      res.json({ status: "success", requestId: docRef.id, matched: status === 'matched' });
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: "Internal server error" });
@@ -115,12 +165,53 @@ async function startServer() {
     if (!trxId) return res.status(400).json({ error: "Missing TrxID" });
 
     try {
+      const cleanTrxId = trxId.toUpperCase().trim();
+      
+      // Update the ID
       await db.collection('depositRequests').doc(requestId).update({ 
-        trxId: trxId.toUpperCase().trim(),
+        trxId: cleanTrxId,
         updatedAt: new Date().toISOString()
       });
+
+      // Trigger retroactive matching for this specific request
+      console.log(`[TRX-UPDATE] Triggering match check for ${requestId} with ID ${cleanTrxId}`);
+      
+      // Look for a matching UNUSED transaction
+      const txSnap = await db.collection('transactions')
+        .where('trxId', '==', cleanTrxId)
+        .limit(1)
+        .get();
+
+      if (!txSnap.empty) {
+        const txDoc = txSnap.docs[0];
+        const txData = txDoc.data() as any;
+        const reqSnap = await db.collection('depositRequests').doc(requestId).get();
+        if (reqSnap.exists) {
+            const reqData = reqSnap.data() as any;
+            if (reqData.status === 'pending' && txData.isUsed !== true && Math.abs(txData.amount - reqData.amount) < 0.1) {
+                // MATCH!
+                await db.collection('depositRequests').doc(requestId).update({
+                    status: 'matched',
+                    matchedAt: new Date().toISOString(),
+                    matchedTransactionId: txDoc.id,
+                    matchingNote: 'Auto-matched after manual TrxID update'
+                });
+                await db.collection('transactions').doc(txDoc.id).update({
+                    isUsed: true,
+                    matchedAt: new Date().toISOString(),
+                    matchedTo: requestId
+                });
+                
+                // Notify merchant
+                notifyMerchant(reqData.userId, requestId, reqData, reqData.amount, cleanTrxId, txData.customerPhone || txData.sender, txData.provider);
+                console.log(`[TRX-UPDATE] Successfully auto-approved ${requestId}`);
+            }
+        }
+      }
+
       res.json({ status: "success" });
     } catch (error) {
+      console.error("[TRX-UPDATE ERROR]", error);
       res.status(500).json({ error: "Failed to update TrxID" });
     }
   });
@@ -131,7 +222,12 @@ async function startServer() {
     if (!userId || !amount || !trxId) return res.status(400).json({ error: "Missing fields" });
 
     const cleanTrxId = trxId.toUpperCase().trim();
-    const cleanAmount = parseFloat(amount);
+    const cleanAmount = parseFloat(String(amount));
+
+    if (isNaN(cleanAmount)) {
+      console.error("[USER DEPOSIT] Invalid amount received:", amount);
+      return res.status(400).json({ error: "Invalid amount" });
+    }
 
     try {
       // 1. Fetch transaction by TrxID only (Avoiding multi-operator query index requirement)
@@ -1077,4 +1173,7 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch(err => {
+  console.error("CRITICAL: Failed to start server:", err);
+  process.exit(1);
+});

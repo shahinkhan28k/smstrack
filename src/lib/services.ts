@@ -67,12 +67,14 @@ export const transactionService = {
     const q = query(
       collection(db, 'transactions'), 
       where('userId', '==', userId), 
-      orderBy('createdAt', 'desc'),
-      limit(50)
+      // orderBy removed to avoid index requirement
+      limit(100)
     );
     return onSnapshot(q, (snap) => {
       const txs = snap.docs.map(d => ({ id: d.id, ...d.data() } as Transaction));
-      callback(txs);
+      // Sort client-side
+      txs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      callback(txs.slice(0, 50));
     }, (e) => {
       handleFirestoreError(e, OperationType.LIST, 'transactions');
     });
@@ -96,12 +98,14 @@ export const depositService = {
     const q = query(
       collection(db, 'depositRequests'), 
       where('userId', '==', userId),
-      orderBy('createdAt', 'desc'),
-      limit(20)
+      // orderBy removed to avoid index requirement
+      limit(100)
     );
     return onSnapshot(q, (snap) => {
       const requests = snap.docs.map(d => ({ id: d.id, ...d.data() } as DepositRequest));
-      callback(requests);
+      // Sort client-side
+      requests.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      callback(requests.slice(0, 20));
     }, (e) => {
       handleFirestoreError(e, OperationType.LIST, 'depositRequests');
     });

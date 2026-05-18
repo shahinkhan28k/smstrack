@@ -62,8 +62,11 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
 
   useEffect(() => {
     if (!profile) return;
-    const unsub = onSnapshot(query(collection(db, 'raw_sms'), where('userId', '==', profile.id), orderBy('timestamp', 'desc'), limit(50)), (snap) => {
-      setRawSMS(snap.docs.map(d => ({ id: d.id, ...d.data() } as RawSMS)));
+    const unsub = onSnapshot(query(collection(db, 'raw_sms'), where('userId', '==', profile.id), limit(100)), (snap) => {
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as RawSMS));
+      // Sort client-side
+      docs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      setRawSMS(docs.slice(0, 50));
     });
     return unsub;
   }, [profile]);

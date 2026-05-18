@@ -134,10 +134,9 @@ async function startServer() {
     const cleanAmount = parseFloat(amount);
 
     try {
-      // 1. Check if this transaction was already received by the admin and IS NOT USED
+      // 1. Fetch transaction by TrxID only (Avoiding multi-operator query index requirement)
       const txSnap = await db.collection('transactions')
         .where('trxId', '==', cleanTrxId)
-        .where('isUsed', '!=', true) // Added check
         .limit(1)
         .get();
 
@@ -146,11 +145,16 @@ async function startServer() {
       let txIdToMark = null;
 
       if (!txSnap.empty) {
-        const txData = txSnap.docs[0].data() as any;
-        if (Math.abs(txData.amount - cleanAmount) < 0.1) {
+        const txDoc = txSnap.docs[0];
+        const txData = txDoc.data() as any;
+        
+        // 2. Check if transaction is already used OR amount mismatch
+        if (txData.isUsed === true) {
+           console.log(`[USER DEPOSIT] TrxID ${cleanTrxId} already used.`);
+        } else if (Math.abs(txData.amount - cleanAmount) < 0.1) {
           status = 'approved';
           matchedAt = new Date().toISOString();
-          txIdToMark = txSnap.docs[0].id;
+          txIdToMark = txDoc.id;
         }
       }
 
@@ -264,17 +268,19 @@ async function startServer() {
         if (trxId && trxId.length > 5 && !trxId.startsWith('EXT_')) {
           const txSnap = await db.collection('transactions')
             .where('trxId', '==', trxId)
-            .where('isUsed', '!=', true) // DO NOT USE ALREADY USED TRANSACTIONS
             .limit(1)
             .get();
 
           if (!txSnap.empty) {
-            const txData = txSnap.docs[0].data() as any;
-            if (Math.abs(Number(txData.amount) - amount) < 0.1) {
+            const txDoc = txSnap.docs[0];
+            const txData = txDoc.data() as any;
+            
+            // Check if amount matches AND it's not already used
+            if (txData.isUsed !== true && Math.abs(Number(txData.amount) - amount) < 0.1) {
               console.log(`[RESCAN MATCH] Strategy A: TrxID ${trxId} verified.`);
               
               // Mark the transaction as USED immediately to prevent double usage
-              await db.collection('transactions').doc(txSnap.docs[0].id).update({ 
+              await db.collection('transactions').doc(txDoc.id).update({ 
                 isUsed: true, 
                 matchedAt: new Date().toISOString(),
                 matchedTo: docRef.id 
@@ -598,13 +604,23 @@ async function startServer() {
             regex: /Tk\. ([\d,]+\.?\d*) received from (\d+)\. .*TrxID[:\s]+([A-Z0-9]+)/i,
             amtIdx: 1, phoneIdx: 2, trxIdx: 3, prov: "Rocket"
           },
-          // Generic Payment Matching
+          // Rocket Generic
           {
-            regex: /(?:Tk|Amount|টাকা|পরিমাণ)[:\s]*([\d,]+\.?\d*)/i,
+            regex: /received (?:Tk )?([\d,]+\.?\d*).*TrxID[:\s]+([A-Z0-9]+)/i,
+            amtIdx: 1, trxIdx: 2, prov: "Rocket"
+          },
+          // Upay Received
+          {
+            regex: /You have received (?:Tk )?([\d,]+\.?\d*) from (\d+)\. .*TrxID ([A-Z0-9]+)/i,
+            amtIdx: 1, phoneIdx: 2, trxIdx: 3, prov: "Upay"
+          },
+          // Generic Payment Matching (Multi-language)
+          {
+            regex: /(?:Tk|Amount|টাকা|পরিমাণ|পেমেন্ট|রিসিভ)[:\s]*([\d,]+\.?\d*)/i,
             amtIdx: 1
           },
           {
-            regex: /(?:TrxID|TxnID|ID|ট্রানজেকশন)[:\s]*([A-Z0-9]{8,})/i,
+            regex: /(?:TrxID|TxnID|ID|ট্রানজেকশন|আইডি)[:\s]*([A-Z0-9]{6,})/i,
             trxIdx: 1
           }
         ];
@@ -656,34 +672,49 @@ async function startServer() {
 
       // 5. If we have a valid transaction, save and match
       if (amount > 0 || trxId) {
-        // Prevent duplicate processing of the same TrxID for the same user
+        let txRefId = null;
+        let isNewTransaction = false;
+
+        // Prevent duplicate processing or allow retry if not yet used
         if (trxId && trxId.length > 5) {
           const dupSnap = await db.collection('transactions').where('userId', '==', userId).where('trxId', '==', trxId).limit(1).get();
           if (!dupSnap.empty) {
-            console.log(`[SMS] Duplicate TrxID detected and skipped: ${trxId}`);
-            return res.status(200).json({ status: true, success: true, message: "Duplicate skipping", processed: false });
+            const existingTx = dupSnap.docs[0].data() as any;
+            txRefId = dupSnap.docs[0].id;
+            
+            if (existingTx.isUsed === true) {
+              console.log(`[SMS] TrxID ${trxId} already used and confirmed.`);
+              return res.status(200).json({ status: true, success: true, message: "Transaction already confirmed.", processed: false });
+            }
+            console.log(`[SMS] Existing unused TrxID found: ${trxId}. Attempting re-match.`);
           }
         }
 
-        const txData = {
-          userId,
-          deviceId,
-          provider: provider || "Unknown",
-          amount,
-          trxId: trxId || "EXT_" + Math.random().toString(36).substring(7).toUpperCase(),
-          customerPhone: customerPhone || "Unknown",
-          sender: sender || "System", // Service center number
-          message: message || `Data: ${amount} TK`,
-          createdAt: new Date().toISOString()
-        };
+        if (!txRefId) {
+          isNewTransaction = true;
+          const txData = {
+            userId,
+            deviceId,
+            provider: provider || "Unknown",
+            amount,
+            trxId: trxId || "EXT_" + Math.random().toString(36).substring(7).toUpperCase(),
+            customerPhone: customerPhone || "Unknown",
+            sender: sender || "System", // Service center number
+            message: message || `Data: ${amount} TK`,
+            createdAt: new Date().toISOString(),
+            isUsed: false
+          };
 
-        const txRef = await db.collection('transactions').add(txData);
-        await db.collection('raw_sms').doc(rawSmsRef.id).update({ 
-          status: 'processed', 
-          transactionId: txRef.id,
-          extractedTrxId: trxId || null,
-          extractedAmount: amount || null
-        });
+          const txRef = await db.collection('transactions').add(txData);
+          txRefId = txRef.id;
+          
+          await db.collection('raw_sms').doc(rawSmsRef.id).update({ 
+            status: 'processed', 
+            transactionId: txRefId,
+            extractedTrxId: trxId || null,
+            extractedAmount: amount || null
+          });
+        }
 
         // Update Device Status (Upsert)
         if (deviceId && deviceId !== 'gateway_api') {
@@ -751,14 +782,14 @@ async function startServer() {
           
           await db.collection('depositRequests').doc(matchedDoc.id).update({
             status: 'matched',
-            matchedTransactionId: txRef.id,
+            matchedTransactionId: txRefId,
             matchedAt: new Date().toISOString(),
             trxId: depositData.trxId || trxId, // Save the extracted ID if empty
             matchingNote: matchNote
           });
 
           // Mark the transaction as USED to prevent reusing it for another request
-          await db.collection('transactions').doc(txRef.id).update({
+          await db.collection('transactions').doc(txRefId).update({
             isUsed: true,
             matchedAt: new Date().toISOString(),
             matchedTo: matchedDoc.id
@@ -818,9 +849,9 @@ async function startServer() {
 
           if (topupDoc) {
             // Check if this transaction is already linked to another deposit (Security second check)
-            const txCheck = await db.collection('transactions').doc(txRef.id).get();
+            const txCheck = await db.collection('transactions').doc(txRefId).get();
             if (txCheck.exists && (txCheck.data() as any).isUsed) {
-              console.log(`[TOPUP SKIP] Transaction ${txRef.id} already used for another match.`);
+              console.log(`[TOPUP SKIP] Transaction ${txRefId} already used for another match.`);
               return;
             }
 
@@ -836,7 +867,7 @@ async function startServer() {
             });
 
             // 2. Mark Transaction as Used
-            await db.collection('transactions').doc(txRef.id).update({
+            await db.collection('transactions').doc(txRefId).update({
               isUsed: true,
               matchedAt: new Date().toISOString(),
               matchedTo: topupDoc.id

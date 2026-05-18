@@ -4,58 +4,39 @@ import cors from "cors";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import * as dotenv from "dotenv";
-import { initializeApp, getApps, getApp } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import admin from 'firebase-admin';
 import firebaseConfig from './firebase-applet-config.json';
 
 dotenv.config();
 
 // Initialize Firebase Admin for Server-side logic (bypass security rules)
-let db: any;
+let db: admin.firestore.Firestore;
 
 function getDb() {
   if (db) return db;
   try {
-    const apps = getApps();
-    let app;
-    if (apps.length === 0) {
-      // In this environment, initializeApp() without arguments is the most reliable
-      // as it automatically picks up the project ID and service account credentials.
-      app = initializeApp();
-    } else {
-      app = getApp();
+    if (admin.apps.length === 0) {
+      admin.initializeApp({
+        projectId: firebaseConfig.projectId,
+      });
     }
+    
     const dbId = firebaseConfig.firestoreDatabaseId;
+    const app = admin.app();
     if (dbId && dbId !== "(default)" && dbId?.toString().trim().length > 0) {
-      db = getFirestore(app, dbId);
+      db = (app as any).firestore(dbId);
     } else {
-      db = getFirestore(app);
+      db = admin.firestore();
     }
     return db;
-  } catch (e) {
-    console.error("Firebase Admin First Init Attempt Failed:", e);
-    try {
-      // Fallback: try with projectId if default fails
-      const apps = getApps();
-      if (apps.length === 0) {
-        const app = initializeApp({
-          projectId: firebaseConfig.projectId,
-        });
-        db = getFirestore(app);
-      } else {
-        db = getFirestore(getApp());
-      }
-      return db;
-    } catch (e2: any) {
-      console.error("Firebase Admin Second Init Attempt Failed:", e2);
-      // Last resort: just throw so the parent handler knows something is wrong
-      throw e2;
-    }
+  } catch (e: any) {
+    console.error("Firebase Admin Initialization Error:", e);
+    throw e;
   }
 }
 
 // Lazy load FieldValue to ensure admin is initialized if needed
-const getFieldValue = () => FieldValue;
+const getFieldValue = () => admin.firestore.FieldValue;
 
 async function startServer() {
   const app = express();

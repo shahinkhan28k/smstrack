@@ -15,6 +15,7 @@ export default function AdminPlans() {
     name: '',
     price: 0,
     deviceLimit: 1,
+    apiKeyLimit: 1,
     durationDays: 30,
     features: [],
     badge: '',
@@ -34,13 +35,23 @@ export default function AdminPlans() {
   }, []);
 
   const handleSave = async (id?: string) => {
-    const planId = id || Math.random().toString(36).substring(7);
-    try {
-      await setDoc(doc(db, 'plans', planId), formData, { merge: true });
-      setIsAdding(false);
-      setEditingId(null);
-      setFormData({ name: '', price: 0, deviceLimit: 1, durationDays: 30, features: [], badge: '', isPopular: false, order: 0 });
-    } catch (e) {
+      const planId = id || Math.random().toString(36).substring(7);
+      try {
+        await setDoc(doc(db, 'plans', planId), formData, { merge: true });
+        setIsAdding(false);
+        setEditingId(null);
+        setFormData({ 
+          name: '', 
+          price: 0, 
+          deviceLimit: 1, 
+          apiKeyLimit: 1, 
+          durationDays: 30, 
+          features: [], 
+          badge: '', 
+          isPopular: false, 
+          order: 0 
+        });
+      } catch (e) {
       console.error(e);
       alert("Error saving plan.");
     }
@@ -115,7 +126,7 @@ export default function AdminPlans() {
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Plan Name (প্যাকেজের নাম)</label>
                 <input 
                   type="text" 
-                  value={formData.name}
+                  value={formData.name ?? ''}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   placeholder="e.g. Basic, Premium, Gold"
                   className="w-full h-14 px-6 bg-gray-50 border border-transparent focus:bg-white focus:border-blue-500 rounded-2xl outline-none transition-all font-bold text-gray-900 shadow-sm"
@@ -128,7 +139,7 @@ export default function AdminPlans() {
                   <div className="relative">
                     <input 
                       type="number" 
-                      value={formData.price}
+                      value={formData.price ?? 0}
                       onChange={(e) => setFormData({ ...formData, price: parseFloat(e.target.value) })}
                       className="w-full h-14 pl-12 pr-6 bg-gray-50 border border-transparent focus:bg-white focus:border-blue-500 rounded-2xl outline-none transition-all font-black text-blue-600 shadow-sm"
                     />
@@ -140,7 +151,7 @@ export default function AdminPlans() {
                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Order (ক্রম)</label>
                   <input 
                     type="number" 
-                    value={formData.order}
+                    value={formData.order ?? 0}
                     onChange={(e) => setFormData({ ...formData, order: parseInt(e.target.value) })}
                     className="w-full h-14 px-6 bg-gray-50 border border-transparent focus:bg-white focus:border-blue-500 rounded-2xl outline-none transition-all font-bold text-gray-900 shadow-sm"
                   />
@@ -152,20 +163,35 @@ export default function AdminPlans() {
                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Device Limit (ডিভাইস সীমা)</label>
                   <input 
                     type="number" 
-                    value={formData.deviceLimit}
+                    value={formData.deviceLimit ?? 1}
                     onChange={(e) => setFormData({ ...formData, deviceLimit: parseInt(e.target.value) })}
                     className="w-full h-14 px-6 bg-gray-50 border border-transparent focus:bg-white focus:border-blue-500 rounded-2xl outline-none transition-all font-bold text-gray-900 shadow-sm"
                   />
                 </div>
 
                 <div className="space-y-3">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">API Key Limit (এপিআই কি সীমা)</label>
+                  <input 
+                    type="number" 
+                    value={formData.apiKeyLimit ?? 1}
+                    onChange={(e) => setFormData({ ...formData, apiKeyLimit: parseInt(e.target.value) })}
+                    className="w-full h-14 px-6 bg-gray-50 border border-transparent focus:bg-white focus:border-blue-500 rounded-2xl outline-none transition-all font-bold text-gray-900 shadow-sm"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-3">
                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Duration Days (মেয়াদ দিন)</label>
                   <input 
                     type="number" 
-                    value={formData.durationDays}
+                    value={formData.durationDays ?? 30}
                     onChange={(e) => setFormData({ ...formData, durationDays: parseInt(e.target.value) })}
                     className="w-full h-14 px-6 bg-gray-50 border border-transparent focus:bg-white focus:border-blue-500 rounded-2xl outline-none transition-all font-bold text-gray-900 shadow-sm"
                   />
+                </div>
+                <div className="space-y-3 opacity-0 pointer-events-none">
+                   {/* Spacing placeholder */}
                 </div>
               </div>
 
@@ -173,7 +199,7 @@ export default function AdminPlans() {
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Display Badge (ব্যাজ)</label>
                 <input 
                   type="text" 
-                  value={formData.badge}
+                  value={formData.badge ?? ''}
                   onChange={(e) => setFormData({ ...formData, badge: e.target.value })}
                   placeholder="e.g. Most Popular, 50% OFF"
                   className="w-full h-14 px-6 bg-gray-50 border border-transparent focus:bg-white focus:border-blue-500 rounded-2xl outline-none transition-all font-bold text-emerald-600 placeholder:font-medium shadow-sm"
@@ -184,7 +210,7 @@ export default function AdminPlans() {
                 <div className="relative">
                   <input 
                     type="checkbox" 
-                    checked={formData.isPopular}
+                    checked={formData.isPopular ?? false}
                     onChange={(e) => setFormData({ ...formData, isPopular: e.target.checked })}
                     className="sr-only peer"
                   />
@@ -204,7 +230,7 @@ export default function AdminPlans() {
                 <div className="flex gap-3">
                   <input 
                     type="text" 
-                    value={featureInput}
+                    value={featureInput ?? ''}
                     onChange={(e) => setFeatureInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && addFeature()}
                     placeholder="Enter feature (e.g. Unlimited SMS)..."
@@ -270,7 +296,10 @@ export default function AdminPlans() {
               <div>
                 <h4 className="text-xl font-black text-gray-900">{p.name}</h4>
                 <div className="text-2xl font-black text-blue-600 mt-1">{p.price} TK<span className="text-xs font-medium text-gray-400">/{p.durationDays} days</span></div>
-                <div className="text-[10px] font-black text-indigo-600 uppercase mt-1">Limit: {p.deviceLimit} Devices</div>
+                <div className="flex flex-wrap gap-2 mt-1">
+                  <div className="text-[10px] font-black text-indigo-600 uppercase">Limit: {p.deviceLimit} Devices</div>
+                  <div className="text-[10px] font-black text-emerald-600 uppercase border-l border-gray-200 pl-2">Key Limit: {p.apiKeyLimit || 0}</div>
+                </div>
               </div>
               <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
                 <button onClick={() => startEdit(p)} className="p-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100"><Edit2 className="w-4 h-4" /></button>

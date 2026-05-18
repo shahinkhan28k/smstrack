@@ -166,7 +166,7 @@ export default function AdminUsers() {
           <input 
             type="text" 
             placeholder="Search by name, email or ID..." 
-            value={searchTerm}
+            value={searchTerm ?? ''}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-purple-500 outline-none w-full sm:w-64"
           />
@@ -301,7 +301,7 @@ export default function AdminUsers() {
                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Balance (TK)</label>
                   <input 
                     type="number" 
-                    value={editFormData.balance}
+                    value={editFormData.balance ?? 0}
                     onChange={(e) => setEditFormData({...editFormData, balance: parseFloat(e.target.value) || 0})}
                     className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none"
                   />
@@ -310,7 +310,7 @@ export default function AdminUsers() {
                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Device Limit</label>
                   <input 
                     type="number" 
-                    value={editFormData.planDeviceLimit}
+                    value={editFormData.planDeviceLimit ?? 1}
                     onChange={(e) => setEditFormData({...editFormData, planDeviceLimit: parseInt(e.target.value) || 0})}
                     className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none"
                   />
@@ -321,7 +321,7 @@ export default function AdminUsers() {
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Plan Name</label>
                 <input 
                   type="text" 
-                  value={editFormData.plan}
+                  value={editFormData.plan ?? ''}
                   onChange={(e) => setEditFormData({...editFormData, plan: e.target.value})}
                   className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none"
                 />
@@ -331,7 +331,7 @@ export default function AdminUsers() {
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Expiry Date</label>
                 <input 
                   type="date" 
-                  value={editFormData.planExpiry}
+                  value={editFormData.planExpiry ?? ''}
                   onChange={(e) => setEditFormData({...editFormData, planExpiry: e.target.value})}
                   className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none"
                 />

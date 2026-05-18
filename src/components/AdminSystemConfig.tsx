@@ -71,7 +71,7 @@ export default function AdminSystemConfig() {
             </label>
             <input 
               type="text" 
-              value={config.bkashNumber}
+              value={config.bkashNumber ?? ''}
               onChange={(e) => setConfig({ ...config, bkashNumber: e.target.value })}
               placeholder="017XXXXXXXX"
               className="w-full h-14 px-5 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-pink-500 focus:bg-white outline-none transition-all text-lg font-bold text-gray-900"
@@ -85,7 +85,7 @@ export default function AdminSystemConfig() {
             </label>
             <input 
               type="text" 
-              value={config.nagadNumber}
+              value={config.nagadNumber ?? ''}
               onChange={(e) => setConfig({ ...config, nagadNumber: e.target.value })}
               placeholder="018XXXXXXXX"
               className="w-full h-14 px-5 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-orange-500 focus:bg-white outline-none transition-all text-lg font-bold text-gray-900"
@@ -99,7 +99,7 @@ export default function AdminSystemConfig() {
             </label>
             <input 
               type="text" 
-              value={config.rocketNumber}
+              value={config.rocketNumber ?? ''}
               onChange={(e) => setConfig({ ...config, rocketNumber: e.target.value })}
               placeholder="019XXXXXXXX"
               className="w-full h-14 px-5 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-purple-700 focus:bg-white outline-none transition-all text-lg font-bold text-gray-900"
@@ -111,7 +111,7 @@ export default function AdminSystemConfig() {
               <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">App Version</label>
               <input 
                 type="text" 
-                value={config.appVersion}
+                value={config.appVersion ?? ''}
                 onChange={(e) => setConfig({ ...config, appVersion: e.target.value })}
                 className="w-full h-12 px-4 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-blue-500 focus:bg-white outline-none transition-all text-sm font-bold"
               />
@@ -139,7 +139,7 @@ export default function AdminSystemConfig() {
           <div className="space-y-2">
             <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Global Announcement (ড্যাশবোর্ড এনাউন্সমেন্ট)</label>
             <textarea 
-              value={config.announcement}
+              value={config.announcement ?? ''}
               onChange={(e) => setConfig({ ...config, announcement: e.target.value })}
               placeholder="Enter message for all users..."
               className="w-full h-24 p-4 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-blue-500 focus:bg-white outline-none transition-all text-sm font-medium resize-none"

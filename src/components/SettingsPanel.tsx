@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { UserProfile } from '../types';
+import { UserProfile, ApiKey } from '../types';
 import { 
   Smartphone,
   Key, 
@@ -14,11 +14,14 @@ import {
   Zap,
   Shield,
   QrCode,
-  Globe
+  Globe,
+  Trash2,
+  PlusCircle,
+  X
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { generateApiKey, generateApiSecret } from '../lib/utils';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, updateDoc, collection, addDoc, deleteDoc, onSnapshot, query, where, orderBy } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 
 interface SettingsPanelProps {
@@ -37,6 +40,68 @@ export default function SettingsPanel({ profile, onRefresh, onShowUpgrade }: Set
   const [testSms, setTestSms] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState<any>(null);
+  const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
+  const [isAddingKey, setIsAddingKey] = useState(false);
+  const [newKeyName, setNewKeyName] = useState('');
+
+  React.useEffect(() => {
+    if (!profile) return;
+    const q = query(collection(db, 'api_keys'), where('userId', '==', profile.id), orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(q, (snap) => {
+      setApiKeys(snap.docs.map(d => ({ id: d.id, ...d.data() } as ApiKey)));
+    });
+    return unsub;
+  }, [profile]);
+
+  const handleAddApiKey = async () => {
+    if (!profile) return;
+    const maxKeys = profile.planApiKeyLimit || 1;
+    if (apiKeys.length >= maxKeys) {
+      alert(`আপনার প্যাকেজের এপিআই কি লিমিট (${maxKeys}) শেষ হয়ে গেছে। আরও কি জেনারেট করতে প্যাকেজ আপগ্রেড করুন।`);
+      onShowUpgrade();
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const newKey: Partial<ApiKey> = {
+        userId: profile.id,
+        name: newKeyName || `Key ${apiKeys.length + 1}`,
+        apiKey: generateApiKey(),
+        apiSecret: generateApiSecret(),
+        status: 'active',
+        createdAt: new Date().toISOString()
+      };
+      await addDoc(collection(db, 'api_keys'), newKey);
+      
+      // If this is the first key, also update the main user profile for backward compatibility
+      if (!profile.apiKey) {
+        await updateDoc(doc(db, 'users', profile.id), {
+          apiKey: newKey.apiKey,
+          apiSecret: newKey.apiSecret
+        });
+      }
+
+      setIsAddingKey(false);
+      setNewKeyName('');
+      alert('নতুন এপিআই কি সফলভাবে তৈরি করা হয়েছে।');
+    } catch (e) {
+      console.error(e);
+      alert('এপিআই কি তৈরি করতে সমস্যা হয়েছে।');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRevokeKey = async (id: string) => {
+    if (!confirm('আপনি কি নিশ্চিত যে এই এপিআই কি-টি ডিলিট করতে চান? এটি ব্যবহার করা কোন অ্যাপ কাজ করবে না।')) return;
+    try {
+      await deleteDoc(doc(db, 'api_keys', id));
+    } catch (e) {
+      console.error(e);
+      alert('সফল হয়নি।');
+    }
+  };
 
   const handleTestAi = async () => {
     setAiLoading(true);
@@ -126,7 +191,7 @@ export default function SettingsPanel({ profile, onRefresh, onShowUpgrade }: Set
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">bKash Personal</label>
                 <input 
                   type="text" 
-                  value={bkashNumber}
+                  value={bkashNumber ?? ''}
                   onChange={(e) => setBkashNumber(e.target.value)}
                   placeholder="017XXXXXXXX"
                   className="w-full px-4 py-3 bg-gray-50 rounded-xl border border-gray-100 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
@@ -136,7 +201,7 @@ export default function SettingsPanel({ profile, onRefresh, onShowUpgrade }: Set
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Nagad Personal</label>
                 <input 
                   type="text" 
-                  value={nagadNumber}
+                  value={nagadNumber ?? ''}
                   onChange={(e) => setNagadNumber(e.target.value)}
                   placeholder="017XXXXXXXX"
                   className="w-full px-4 py-3 bg-gray-50 rounded-xl border border-gray-100 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
@@ -146,7 +211,7 @@ export default function SettingsPanel({ profile, onRefresh, onShowUpgrade }: Set
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Rocket Personal</label>
                 <input 
                   type="text" 
-                  value={rocketNumber}
+                  value={rocketNumber ?? ''}
                   onChange={(e) => setRocketNumber(e.target.value)}
                   placeholder="017XXXXXXXX"
                   className="w-full px-4 py-3 bg-gray-50 rounded-xl border border-gray-100 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
@@ -215,7 +280,7 @@ export default function SettingsPanel({ profile, onRefresh, onShowUpgrade }: Set
                   <Globe className="w-4 h-4 text-gray-400" />
                   <input 
                     type="url" 
-                    value={webhookUrl}
+                    value={webhookUrl ?? ''}
                     onChange={(e) => setWebhookUrl(e.target.value)}
                     placeholder="https://your-website.com/api/v1/webhook"
                     className="bg-transparent outline-hidden w-full font-mono text-xs"
@@ -238,92 +303,140 @@ export default function SettingsPanel({ profile, onRefresh, onShowUpgrade }: Set
 
           {/* API Keys Card */}
           <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm relative overflow-hidden">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                <Key className="w-5 h-5 text-blue-600" />
-                API Credentials (মোবাইল অ্যাপ কানেক্ট করতে)
-              </h3>
-              <button 
-                disabled={loading}
-                onClick={handleRegenerateKeys}
-                className="flex items-center gap-2 text-xs font-bold text-blue-600 hover:text-blue-700 transition-all disabled:opacity-50"
-              >
-                <RefreshCcw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
-                Regenerate Keys
-              </button>
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                  <Key className="w-5 h-5 text-blue-600" />
+                  API Credentials (এপিআই কি ম্যানেজমেন্ট)
+                </h3>
+                <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-1">
+                  Plan Limit: {apiKeys.length} / {profile?.planApiKeyLimit || 1} Keys Active
+                </p>
+              </div>
+              
+              {!isAddingKey && (
+                <button 
+                  onClick={() => setIsAddingKey(true)}
+                  disabled={apiKeys.length >= (profile?.planApiKeyLimit || 1)}
+                  className="px-4 py-2 bg-blue-50 text-blue-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-100 transition-all flex items-center gap-2 disabled:opacity-50"
+                >
+                  <PlusCircle className="w-4 h-4" /> Generate New Key
+                </button>
+              )}
             </div>
 
-            {!profile?.apiKey ? (
-              <div className="p-10 text-center bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200">
-                <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Key className="w-8 h-8 text-blue-600" />
+            {isAddingKey && (
+              <div className="mb-8 p-6 bg-blue-50/50 rounded-2xl border border-blue-100 animate-in zoom-in-95 duration-200">
+                <div className="flex items-center justify-between mb-4">
+                  <h4 className="text-sm font-black text-blue-900 uppercase tracking-widest">Generate New API Key</h4>
+                  <button onClick={() => setIsAddingKey(false)} className="text-gray-400 hover:text-gray-600">
+                    <X className="w-5 h-5" />
+                  </button>
                 </div>
-                <h4 className="font-bold text-gray-900 mb-2">আপনার এখনো কোন এপিআই কি নেই</h4>
-                <p className="text-xs text-gray-500 mb-6 max-w-sm mx-auto">মোবাইল অ্যাপের মাধ্যমে এসএমএস ট্র্যাক করতে এবং আপনার ওয়েবসাইটের সাথে কানেক্ট করতে এপিআই কি প্রয়োজন।</p>
-                <button 
-                  onClick={handleRegenerateKeys}
-                  disabled={loading}
-                  className="px-8 py-3 bg-blue-600 text-white rounded-xl font-bold shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all flex items-center gap-2 mx-auto"
-                >
-                  {loading ? <RefreshCcw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                  জেনারেশন শুরু করুন
-                </button>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Key Application Name</label>
+                    <input 
+                      type="text" 
+                      value={newKeyName ?? ''}
+                      onChange={(e) => setNewKeyName(e.target.value)}
+                      placeholder="e.g. Website Payment, Mobile App"
+                      className="w-full h-12 px-6 bg-white border border-transparent focus:border-blue-500 rounded-xl outline-none transition-all font-bold text-gray-900 shadow-sm"
+                    />
+                  </div>
+                  <button 
+                    onClick={handleAddApiKey}
+                    disabled={loading}
+                    className="w-full h-12 bg-blue-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-blue-100 hover:bg-blue-700 transition-all flex items-center justify-center gap-2"
+                  >
+                    {loading ? <RefreshCcw className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                    Generate My Keys
+                  </button>
+                </div>
               </div>
-            ) : (
-              <div className="space-y-6">
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Public API Key (API_KEY)</label>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 px-4 py-3 bg-gray-50 rounded-xl border border-gray-100 text-sm font-mono text-gray-600 select-all">
-                      {profile.apiKey}
+            )}
+
+            <div className="space-y-4">
+              {apiKeys.length === 0 && !isAddingKey && (
+                <div className="p-10 text-center bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200">
+                  <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Key className="w-8 h-8 text-blue-600" />
+                  </div>
+                  <h4 className="font-bold text-gray-900 mb-2">আপনার এখনো কোন এপিআই কি নেই</h4>
+                  <button 
+                    onClick={() => setIsAddingKey(true)}
+                    className="px-8 py-3 bg-blue-600 text-white rounded-xl font-bold shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all flex items-center gap-2 mx-auto"
+                  >
+                    <Plus className="w-4 h-4" /> জেনারেশন শুরু করুন
+                  </button>
+                </div>
+              )}
+
+              {apiKeys.map((key) => (
+                <div key={key.id} className="p-6 bg-white border border-gray-100 rounded-2xl hover:shadow-md transition-all group overflow-hidden relative">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-gray-50 rounded-xl flex items-center justify-center text-gray-400 group-hover:bg-blue-50 group-hover:text-blue-600 transition-all">
+                        <Shield className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-gray-900 group-hover:text-blue-600 transition-colors">{key.name}</h4>
+                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Active • Created {new Date(key.createdAt).toLocaleDateString()}</p>
+                      </div>
                     </div>
                     <button 
-                      onClick={() => handleCopy(profile.apiKey!, 'key')}
-                      className="p-3 bg-gray-50 text-gray-400 hover:text-blue-600 rounded-xl border border-gray-100 transition-all active:scale-95"
+                      onClick={() => handleRevokeKey(key.id)}
+                      className="p-2.5 bg-red-50 text-red-400 hover:text-red-600 rounded-xl opacity-0 group-hover:opacity-100 transition-all"
                     >
-                      {copied === 'key' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                      <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
-                </div>
 
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Secret API Key (API_SECRET)</label>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 px-4 py-3 bg-gray-50 rounded-xl border border-gray-100 text-sm font-mono text-gray-600 select-all">
-                      {profile.apiSecret}
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                       <div className="flex items-center justify-between">
+                         <label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">API Key</label>
+                         <button onClick={() => handleCopy(key.apiKey, key.id + 'k')} className="text-[10px] font-bold text-blue-600 hover:underline">
+                            {copied === key.id + 'k' ? 'Copied!' : 'Copy Key'}
+                         </button>
+                       </div>
+                       <div className="px-4 py-2 bg-gray-50 border border-gray-100 rounded-lg text-[11px] font-mono text-gray-600 overflow-hidden truncate">
+                         {key.apiKey}
+                       </div>
                     </div>
-                    <button 
-                      onClick={() => handleCopy(profile.apiSecret!, 'secret')}
-                      className="p-3 bg-gray-50 text-gray-400 hover:text-blue-600 rounded-xl border border-gray-100 transition-all active:scale-95"
-                    >
-                      {copied === 'secret' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                    </button>
+                    <div className="space-y-2">
+                       <div className="flex items-center justify-between">
+                         <label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">API Secret</label>
+                         <button onClick={() => handleCopy(key.apiSecret, key.id + 's')} className="text-[10px] font-bold text-blue-600 hover:underline">
+                            {copied === key.id + 's' ? 'Copied!' : 'Copy Secret'}
+                         </button>
+                       </div>
+                       <div className="px-4 py-2 bg-gray-50 border border-gray-100 rounded-lg text-[11px] font-mono text-gray-600 overflow-hidden truncate">
+                         {key.apiSecret}
+                       </div>
+                    </div>
                   </div>
                 </div>
+              ))}
+            </div>
 
-                <div className="pt-6 border-t border-gray-50">
-                  <h4 className="text-sm font-bold text-gray-900 mb-4 flex items-center gap-2">
-                    <QrCode className="w-4 h-4 text-emerald-500" />
-                    Integration Snippet
-                  </h4>
-                  <div className="bg-gray-900 rounded-xl p-4 overflow-x-auto text-[11px] font-mono leading-relaxed group">
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="text-gray-500">cURL / Website Deposit</span>
-                      <button 
-                        onClick={() => handleCopy(`curl -X POST ${window.location.origin}/api/v1/deposit-request \\\n -H "Content-Type: application/json" \\\n -d '{"apiKey": "${profile.apiKey}", "amount": 500, "externalId": "order_123"}'`, 'curl')}
-                        className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-white transition-all"
-                      >
-                        {copied === 'curl' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                      </button>
-                    </div>
-                    <code className="text-emerald-400">
-                      {`curl -X POST ${window.location.origin}/api/v1/deposit-request \\`}
-                      <br />
-                      {`  -H "Content-Type: application/json" \\`}
-                      <br />
-                      {`  -d '{"apiKey": "${profile.apiKey}", "amount": 500, "externalId": "order_123"}'`}
-                    </code>
+            {apiKeys.length > 0 && (
+              <div className="mt-8 pt-8 border-t border-gray-50">
+                <h4 className="text-sm font-bold text-gray-900 mb-4 flex items-center gap-2">
+                  <QrCode className="w-4 h-4 text-emerald-500" />
+                  Integration Snippet
+                </h4>
+                <div className="bg-gray-900 rounded-xl p-4 overflow-x-auto text-[11px] font-mono leading-relaxed group">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-gray-500">cURL / Website Deposit</span>
                   </div>
+                  <code className="text-emerald-400">
+                    {`curl -X POST ${window.location.origin}/api/v1/deposit-request \\`}
+                    <br />
+                    {`  -H "Content-Type: application/json" \\`}
+                    <br />
+                    {`  -d '{"apiKey": "YOUR_API_KEY", "amount": 500}'`}
+                  </code>
                 </div>
               </div>
             )}
@@ -341,7 +454,7 @@ export default function SettingsPanel({ profile, onRefresh, onShowUpgrade }: Set
               <textarea 
                 className="w-full p-4 bg-gray-50 border border-gray-100 rounded-xl text-sm min-h-[100px] outline-hidden focus:ring-1 focus:ring-blue-500"
                 placeholder="Paste an SMS here (e.g. You have received tk 500...)"
-                value={testSms}
+                value={testSms ?? ''}
                 onChange={(e) => setTestSms(e.target.value)}
               />
               <button 

@@ -118,15 +118,35 @@
         "features": { "type": "array", "items": { "type": "string" } },
         "badge": { "type": "string" },
         "isPopular": { "type": "boolean" },
-        "order": { "type": "number" }
+        "order": { "type": "number" },
+        "deviceLimit": { "type": "number" },
+        "apiKeyLimit": { "type": "number" }
       },
-      "required": ["name", "price", "features"]
+      "required": ["name", "price", "features", "deviceLimit", "apiKeyLimit"]
+    },
+    "ApiKey": {
+      "title": "API Key",
+      "description": "API credentials for users",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "apiKey": { "type": "string" },
+        "apiSecret": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "apiKey", "apiSecret", "createdAt"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "User",
       "description": "User profiles"
+    },
+    "/api_keys/{keyId}": {
+      "schema": "ApiKey",
+      "description": "User API credentials"
     },
     "/devices/{deviceId}": {
       "schema": "Device",

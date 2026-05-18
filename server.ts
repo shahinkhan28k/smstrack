@@ -19,9 +19,9 @@ function getDb() {
     const apps = getApps();
     let app;
     if (apps.length === 0) {
-      app = initializeApp({
-        projectId: firebaseConfig.projectId,
-      });
+      // In this environment, initializeApp() without arguments is the most reliable
+      // as it automatically picks up the project ID and service account credentials.
+      app = initializeApp();
     } else {
       app = getApp();
     }
@@ -33,9 +33,24 @@ function getDb() {
     }
     return db;
   } catch (e) {
-    console.error("Firebase Admin Init Error:", e);
-    db = getFirestore();
-    return db;
+    console.error("Firebase Admin First Init Attempt Failed:", e);
+    try {
+      // Fallback: try with projectId if default fails
+      const apps = getApps();
+      if (apps.length === 0) {
+        const app = initializeApp({
+          projectId: firebaseConfig.projectId,
+        });
+        db = getFirestore(app);
+      } else {
+        db = getFirestore(getApp());
+      }
+      return db;
+    } catch (e2: any) {
+      console.error("Firebase Admin Second Init Attempt Failed:", e2);
+      // Last resort: just throw so the parent handler knows something is wrong
+      throw e2;
+    }
   }
 }
 
@@ -58,6 +73,24 @@ async function startServer() {
     next();
   });
 
+  async function getUserIdFromApiKey(apiKey: string): Promise<string | null> {
+    if (!apiKey) return null;
+    
+    // 1. Check direct user profile (legacy/master key)
+    const userSnap = await db.collection('users').where('apiKey', '==', apiKey).limit(1).get();
+    if (!userSnap.empty) {
+      return userSnap.docs[0].id;
+    }
+    
+    // 2. Check api_keys collection
+    const keySnap = await db.collection('api_keys').where('apiKey', '==', apiKey).where('status', '==', 'active').limit(1).get();
+    if (!keySnap.empty) {
+      return keySnap.docs[0].data().userId;
+    }
+    
+    return null;
+  }
+
   // API Routes
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", uptime: process.uptime() });
@@ -72,13 +105,11 @@ async function startServer() {
     }
 
     try {
-      const userSnap = await db.collection('users').where('apiKey', '==', apiKey).limit(1).get();
+      const userId = await getUserIdFromApiKey(apiKey);
       
-      if (userSnap.empty) {
+      if (!userId) {
         return res.status(401).json({ error: "Invalid API Key" });
       }
-      
-      const userId = userSnap.docs[0].id;
 
       // Check if we already have this TrxID in transactions (Retroactive Match)
       let status = 'pending';
@@ -634,18 +665,13 @@ async function startServer() {
       let userData = null;
 
       if (apiKey) {
-        let qUser;
-        if (apiSecret) {
-          qUser = db.collection('users').where('apiKey', '==', apiKey).where('apiSecret', '==', apiSecret).limit(1);
-        } else {
-          // Lenient lookup if secret is missing (Common in some SMS apps)
-          qUser = db.collection('users').where('apiKey', '==', apiKey).limit(1);
-        }
-        
-        const userSnap = await qUser.get();
-        if (!userSnap.empty) {
-          userId = userSnap.docs[0].id;
-          userData = userSnap.docs[0].data() as any;
+        const foundUserId = await getUserIdFromApiKey(apiKey);
+        if (foundUserId) {
+          userId = foundUserId;
+          const userSnap = await db.collection('users').doc(userId).get();
+          if (userSnap.exists) {
+            userData = userSnap.data() as any;
+          }
         }
       }
 
@@ -1089,9 +1115,15 @@ async function startServer() {
 
     try {
       // 1. Verify credentials
-      const userSnap = await db.collection('users').where('apiKey', '==', apiKey).where('apiSecret', '==', apiSecret).limit(1).get();
+      let userId: string | null = await getUserIdFromApiKey(apiKey);
+      let userProfile: any = null;
 
-      if (userSnap.empty) {
+      if (userId) {
+        const uSnap = await db.collection('users').doc(userId).get();
+        userProfile = uSnap.data();
+      }
+
+      if (!userId || !userProfile) {
         return res.status(401).json({ 
           status: false, 
           message: "ভুল এপিআই কি অথবা সিক্রেট কি ব্যবহার করা হয়েছে",
@@ -1099,8 +1131,30 @@ async function startServer() {
         });
       }
 
-      const userId = userSnap.docs[0].id;
-      const userProfile = userSnap.docs[0].data() as any;
+      // Validate secret key
+      if (userProfile.apiKey === apiKey) {
+        // Master Key check
+        if (userProfile.apiSecret !== apiSecret) {
+          return res.status(401).json({ 
+            status: false, 
+            message: "ভুল সিক্রেট কি ব্যবহার করা হয়েছে",
+            error_code: "INVALID_SECRET"
+          });
+        }
+      } else {
+        // Secondary Key check
+        const keySnap = await db.collection('api_keys').where('apiKey', '==', apiKey).limit(1).get();
+        if (!keySnap.empty) {
+          const keyData = keySnap.docs[0].data();
+          if (keyData.apiSecret !== apiSecret) {
+            return res.status(401).json({ 
+              status: false, 
+              message: "ভুল সিক্রেট কি ব্যবহার করা হয়েছে",
+              error_code: "INVALID_SECRET"
+            });
+          }
+        }
+      }
 
       // Check if user is active
       if (userProfile.status === 'inactive' || userProfile.status === 'suspended') {

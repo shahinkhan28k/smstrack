@@ -8,6 +8,7 @@ export interface UserProfile {
   plan: string;
   planExpiry?: string;
   planDeviceLimit?: number;
+  planApiKeyLimit?: number;
   balance?: number;
   apiKey?: string;
   apiSecret?: string;
@@ -93,11 +94,22 @@ export interface PlanDefinition {
   name: string;
   price: number;
   deviceLimit: number;
+  apiKeyLimit: number;
   durationDays: number;
   features: string[];
   badge?: string;
   isPopular?: boolean;
   order?: number;
+}
+
+export interface ApiKey {
+  id: string;
+  userId: string;
+  name: string;
+  apiKey: string;
+  apiSecret: string;
+  status: 'active' | 'revoked';
+  createdAt: string;
 }
 
 export interface RawSMS {

@@ -40,7 +40,7 @@ import {
   Activity,
   Code2
 } from 'lucide-react';
-import { collection, addDoc, updateDoc, doc, onSnapshot, query, orderBy, getDoc, where, limit } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, doc, onSnapshot, query, orderBy, getDoc, where, limit, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 
 type Tab = 'overview' | 'transactions' | 'logs' | 'integration' | 'billing' | 'deposits' | 'devices' | 'settings' | 'admin-deposits' | 'admin-config' | 'admin-plans' | 'admin-users' | 'admin-devices' | 'admin-history';
@@ -119,14 +119,26 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
     }
 
     // 2. Check Device Limit
-    const limit = profile.planDeviceLimit || 1; // Default 1 for free if not set
-    if (devices.length >= limit) {
-      alert(`আপনার প্যাকেজের ডিভাইস লিমিট (${limit}) শেষ হয়ে গেছে। আরও ডিভাইস কানেক্ট করতে প্যাকেজ আপগ্রেড করুন।`);
+    const maxDevices = profile.planDeviceLimit || 1; // Default 1 for free if not set
+    if (devices.length >= maxDevices) {
+      alert(`আপনার প্যাকেজের ডিভাইস লিমিট (${maxDevices}) শেষ হয়ে গেছে। আরও ডিভাইস কানেক্ট করতে প্যাকেজ আপগ্রেড করুন।`);
       setShowUpgradeModal(true);
       return;
     }
 
-    if (apiKeyInput !== profile.apiKey || secretKeyInput !== profile.apiSecret) {
+    // 3. Handle multiple API keys: find if input matches any active key
+    const apiKeysSnap = await getDocs(query(
+      collection(db, 'api_keys'),
+      where('userId', '==', profile.id),
+      where('apiKey', '==', apiKeyInput),
+      where('apiSecret', '==', secretKeyInput),
+      limit(1)
+    ));
+
+    const isSecondaryKeyValid = !apiKeysSnap.empty;
+    const isMasterKeyValid = (apiKeyInput === profile.apiKey && secretKeyInput === profile.apiSecret);
+
+    if (!isSecondaryKeyValid && !isMasterKeyValid) {
       alert('Invalid API Key or Secret Key. Please check your credentials in Settings.');
       return;
     }
@@ -187,6 +199,7 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
         plan: planDef.name.toLowerCase(),
         planExpiry: expiryDate.toISOString(),
         planDeviceLimit: planDef.deviceLimit || 1,
+        planApiKeyLimit: planDef.apiKeyLimit || 1,
         balance: userBalance - planDef.price
       });
       await onRefreshProfile();

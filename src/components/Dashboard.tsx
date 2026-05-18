@@ -105,6 +105,24 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
       return;
     }
 
+    // 1. Check Plan Expiry
+    if (profile.planExpiry) {
+      const expiry = new Date(profile.planExpiry);
+      if (expiry < new Date()) {
+        alert('আপনার প্যাকেজের মেয়াদ শেষ হয়ে গেছে। অনুগ্রহ করে রিনিউ করুন।');
+        setShowUpgradeModal(true);
+        return;
+      }
+    }
+
+    // 2. Check Device Limit
+    const limit = profile.planDeviceLimit || 1; // Default 1 for free if not set
+    if (devices.length >= limit) {
+      alert(`আপনার প্যাকেজের ডিভাইস লিমিট (${limit}) শেষ হয়ে গেছে। আরও ডিভাইস কানেক্ট করতে প্যাকেজ আপগ্রেড করুন।`);
+      setShowUpgradeModal(true);
+      return;
+    }
+
     if (apiKeyInput !== profile.apiKey || secretKeyInput !== profile.apiSecret) {
       alert('Invalid API Key or Secret Key. Please check your credentials in Settings.');
       return;
@@ -145,7 +163,7 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
     setShowAddDeviceModal(true);
   };
 
-  const handleUpgrade = async (planDef: PlanDefinition | { name: string, price: number }) => {
+  const handleUpgrade = async (planDef: PlanDefinition) => {
     if (!profile) return;
     
     const userBalance = profile.balance || 0;
@@ -159,13 +177,18 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
     if (!confirm(`${planDef.name} প্যাকেজটি ${planDef.price} TK দিয়ে কিনতে চান?`)) return;
 
     try {
+      const expiryDate = new Date();
+      expiryDate.setDate(expiryDate.getDate() + (planDef.durationDays || 30));
+
       await updateDoc(doc(db, 'users', profile.id), { 
         plan: planDef.name.toLowerCase(),
+        planExpiry: expiryDate.toISOString(),
+        planDeviceLimit: planDef.deviceLimit || 1,
         balance: userBalance - planDef.price
       });
       await onRefreshProfile();
       setShowUpgradeModal(false);
-      alert(`${planDef.name} প্যাকেজটি সফলভাবে একটিভ করা হয়েছে।`);
+      alert(`${planDef.name} প্যাকেজটি সফলভাবে একটিভ করা হয়েছে। মেয়াদ: ${expiryDate.toLocaleDateString()}`);
     } catch (e) {
       console.error(e);
       alert("প্যাকেজ আপডেট করতে সমস্যা হয়েছে।");

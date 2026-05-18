@@ -14,6 +14,8 @@ export default function AdminPlans() {
   const [formData, setFormData] = useState<Partial<PlanDefinition>>({
     name: '',
     price: 0,
+    deviceLimit: 1,
+    durationDays: 30,
     features: [],
     badge: '',
     isPopular: false,
@@ -37,7 +39,7 @@ export default function AdminPlans() {
       await setDoc(doc(db, 'plans', planId), formData, { merge: true });
       setIsAdding(false);
       setEditingId(null);
-      setFormData({ name: '', price: 0, features: [], badge: '', isPopular: false, order: 0 });
+      setFormData({ name: '', price: 0, deviceLimit: 1, durationDays: 30, features: [], badge: '', isPopular: false, order: 0 });
     } catch (e) {
       console.error(e);
       alert("Error saving plan.");
@@ -145,6 +147,28 @@ export default function AdminPlans() {
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Device Limit (ডিভাইস সীমা)</label>
+                  <input 
+                    type="number" 
+                    value={formData.deviceLimit}
+                    onChange={(e) => setFormData({ ...formData, deviceLimit: parseInt(e.target.value) })}
+                    className="w-full h-14 px-6 bg-gray-50 border border-transparent focus:bg-white focus:border-blue-500 rounded-2xl outline-none transition-all font-bold text-gray-900 shadow-sm"
+                  />
+                </div>
+
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Duration Days (মেয়াদ দিন)</label>
+                  <input 
+                    type="number" 
+                    value={formData.durationDays}
+                    onChange={(e) => setFormData({ ...formData, durationDays: parseInt(e.target.value) })}
+                    className="w-full h-14 px-6 bg-gray-50 border border-transparent focus:bg-white focus:border-blue-500 rounded-2xl outline-none transition-all font-bold text-gray-900 shadow-sm"
+                  />
+                </div>
+              </div>
+
               <div className="space-y-3">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Display Badge (ব্যাজ)</label>
                 <input 
@@ -245,7 +269,8 @@ export default function AdminPlans() {
             <div className="flex justify-between items-start mb-6">
               <div>
                 <h4 className="text-xl font-black text-gray-900">{p.name}</h4>
-                <div className="text-2xl font-black text-blue-600 mt-1">{p.price} TK<span className="text-xs font-medium text-gray-400">/mo</span></div>
+                <div className="text-2xl font-black text-blue-600 mt-1">{p.price} TK<span className="text-xs font-medium text-gray-400">/{p.durationDays} days</span></div>
+                <div className="text-[10px] font-black text-indigo-600 uppercase mt-1">Limit: {p.deviceLimit} Devices</div>
               </div>
               <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
                 <button onClick={() => startEdit(p)} className="p-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100"><Edit2 className="w-4 h-4" /></button>

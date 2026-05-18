@@ -46,6 +46,7 @@ export default function App() {
             email: firebaseUser.email || '',
             role: isAdminEmail ? 'admin' : 'user',
             plan: 'free',
+            planDeviceLimit: 1, // Default for free
             balance: 0,
             status: 'active',
             createdAt: new Date().toISOString()

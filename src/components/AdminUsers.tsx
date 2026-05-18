@@ -11,6 +11,14 @@ export default function AdminUsers() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
+  const [editFormData, setEditFormData] = useState({
+    balance: 0,
+    plan: 'free',
+    planDeviceLimit: 1,
+    planExpiry: '',
+    status: 'active'
+  });
 
   useEffect(() => {
     const q = query(collection(db, 'users'), orderBy('createdAt', 'desc'));
@@ -20,6 +28,34 @@ export default function AdminUsers() {
     });
     return unsub;
   }, []);
+
+  const openEditModal = (user: UserProfile) => {
+    setEditingUser(user);
+    setEditFormData({
+      balance: user.balance || 0,
+      plan: user.plan || 'free',
+      planDeviceLimit: user.planDeviceLimit || 1,
+      planExpiry: user.planExpiry ? user.planExpiry.substring(0, 10) : '',
+      status: user.status || 'active'
+    });
+  };
+
+  const handleUpdateUser = async () => {
+    if (!editingUser) return;
+    setProcessingId(editingUser.id);
+    try {
+      await updateDoc(doc(db, 'users', editingUser.id), {
+        ...editFormData,
+        planExpiry: editFormData.planExpiry ? new Date(editFormData.planExpiry).toISOString() : null
+      });
+      setEditingUser(null);
+    } catch (e) {
+      console.error(e);
+      alert("Update failed");
+    } finally {
+      setProcessingId(null);
+    }
+  };
 
   const toggleStatus = async (userId: string, currentStatus: string) => {
     const nextStatus = (currentStatus === 'suspended' || currentStatus === 'inactive') ? 'active' : 'suspended';
@@ -223,6 +259,13 @@ export default function AdminUsers() {
                   <td className="px-6 py-4 text-right">
                     <div className="flex justify-end gap-2">
                       <button 
+                        onClick={() => openEditModal(u)}
+                        className="p-2 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 transition-colors"
+                        title="Edit User"
+                      >
+                        <Zap className="w-4 h-4" />
+                      </button>
+                      <button 
                         onClick={() => toggleStatus(u.id, u.status || 'active')}
                         disabled={processingId === u.id}
                         className={cn(
@@ -243,6 +286,74 @@ export default function AdminUsers() {
           </table>
         </div>
       </div>
+
+      {editingUser && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-lg p-8 animate-in zoom-in-95 duration-200 shadow-2xl relative">
+            <h3 className="text-2xl font-bold text-gray-900 mb-6">Edit User: {editingUser.name}</h3>
+            
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Balance (TK)</label>
+                  <input 
+                    type="number" 
+                    value={editFormData.balance}
+                    onChange={(e) => setEditFormData({...editFormData, balance: parseFloat(e.target.value) || 0})}
+                    className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Device Limit</label>
+                  <input 
+                    type="number" 
+                    value={editFormData.planDeviceLimit}
+                    onChange={(e) => setEditFormData({...editFormData, planDeviceLimit: parseInt(e.target.value) || 0})}
+                    className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Plan Name</label>
+                <input 
+                  type="text" 
+                  value={editFormData.plan}
+                  onChange={(e) => setEditFormData({...editFormData, plan: e.target.value})}
+                  className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Expiry Date</label>
+                <input 
+                  type="date" 
+                  value={editFormData.planExpiry}
+                  onChange={(e) => setEditFormData({...editFormData, planExpiry: e.target.value})}
+                  className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-6">
+                <button 
+                  onClick={() => setEditingUser(null)}
+                  className="flex-1 py-3 text-sm font-bold text-gray-600 bg-gray-50 hover:bg-gray-100 rounded-xl transition-all"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleUpdateUser}
+                  disabled={processingId === editingUser.id}
+                  className="flex-1 py-3 text-sm font-bold text-white bg-purple-600 hover:bg-purple-700 rounded-xl shadow-lg shadow-purple-200 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {processingId === editingUser.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserCheck className="w-4 h-4" />}
+                  Save Changes
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

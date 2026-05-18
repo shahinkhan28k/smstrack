@@ -3,15 +3,35 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import * as dotenv from "dotenv";
-import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, query, where, getDocs, updateDoc, doc, limit, serverTimestamp, increment } from 'firebase/firestore';
+import * as admin from 'firebase-admin';
+import { getFirestore } from 'firebase-admin/firestore';
 import firebaseConfig from './firebase-applet-config.json';
 
 dotenv.config();
 
-// Initialize Firebase for Server-side logic
-const firebaseApp = initializeApp(firebaseConfig);
-const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
+// Initialize Firebase Admin for Server-side logic (bypass security rules)
+let db: admin.firestore.Firestore;
+
+try {
+  if (!admin.apps || admin.apps.length === 0) {
+    admin.initializeApp({
+      projectId: firebaseConfig.projectId,
+    });
+  }
+  
+  const app = admin.apps[0];
+  if (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== "(default)") {
+    db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  } else {
+    db = getFirestore(app);
+  }
+} catch (e) {
+  console.error("Firebase Admin Init Error:", e);
+  // Last resort fallback
+  db = admin.firestore();
+}
+
+const FieldValue = admin.firestore.FieldValue;
 
 async function startServer() {
   const app = express();
@@ -33,9 +53,7 @@ async function startServer() {
     }
 
     try {
-      const usersRef = collection(db, 'users');
-      const q = query(usersRef, where('apiKey', '==', apiKey), limit(1));
-      const userSnap = await getDocs(q);
+      const userSnap = await db.collection('users').where('apiKey', '==', apiKey).limit(1).get();
       
       if (userSnap.empty) {
         return res.status(401).json({ error: "Invalid API Key" });
@@ -43,13 +61,13 @@ async function startServer() {
       
       const userId = userSnap.docs[0].id;
 
-      const docRef = await addDoc(collection(db, 'depositRequests'), {
+      const docRef = await db.collection('depositRequests').add({
         userId,
         amount: Number(amount),
-        senderPhone,
-        provider,
-        webhookUrl,
-        externalId,
+        senderPhone: senderPhone || "",
+        provider: provider || "Unknown",
+        webhookUrl: webhookUrl || "",
+        externalId: externalId || "",
         status: 'pending',
         createdAt: new Date().toISOString()
       });
@@ -65,15 +83,16 @@ async function startServer() {
   app.get("/api/v1/checkout-info/:requestId", async (req, res) => {
     const { requestId } = req.params;
     try {
-      const docSnap = await getDocs(query(collection(db, 'depositRequests'), where('__name__', '==', requestId), limit(1)));
-      if (docSnap.empty) {
+      const docSnap = await db.collection('depositRequests').doc(requestId).get();
+      if (!docSnap.exists) {
         return res.status(404).json({ error: "Request not found" });
       }
-      const data = docSnap.docs[0].data();
+      const data = docSnap.data() as any;
       
       // Fetch merchant name
-      const userSnap = await getDocs(query(collection(db, 'users'), where('__name__', '==', data.userId), limit(1)));
-      const merchant = userSnap.empty ? "Merchant" : userSnap.docs[0].data().name;
+      const userSnap = await db.collection('users').doc(data.userId).get();
+      const merchant = !userSnap.exists ? "Merchant" : userSnap.data()?.name;
+      const userData = userSnap.exists ? userSnap.data() as any : {};
 
       // Only return necessary public info
       res.json({
@@ -82,7 +101,7 @@ async function startServer() {
         provider: data.provider,
         externalId: data.externalId,
         merchantName: merchant,
-        merchantNumber: userSnap.empty ? "Contact Business" : (userSnap.docs[0].data()[`${data.provider.toLowerCase()}Number`] || "Not Set")
+        merchantNumber: !userSnap.exists ? "Contact Business" : (userData[`${data.provider.toLowerCase()}Number`] || "Not Set")
       });
     } catch (error) {
       res.status(500).json({ error: "Server error" });
@@ -96,8 +115,7 @@ async function startServer() {
     if (!trxId) return res.status(400).json({ error: "Missing TrxID" });
 
     try {
-      const docRef = doc(db, 'depositRequests', requestId);
-      await updateDoc(docRef, { 
+      await db.collection('depositRequests').doc(requestId).update({ 
         trxId: trxId.toUpperCase().trim(),
         updatedAt: new Date().toISOString()
       });
@@ -116,25 +134,28 @@ async function startServer() {
     const cleanAmount = parseFloat(amount);
 
     try {
-      // 1. Check if this transaction was already received by the admin
-      // Since it's a deposit to the SYSTEM, we look for transactions belonging to ADMINS
-      // or just search ALL transactions for this TrxID that match the amount.
-      const txq = query(collection(db, 'transactions'), where('trxId', '==', cleanTrxId), limit(1));
-      const txSnap = await getDocs(txq);
+      // 1. Check if this transaction was already received by the admin and IS NOT USED
+      const txSnap = await db.collection('transactions')
+        .where('trxId', '==', cleanTrxId)
+        .where('isUsed', '!=', true) // Added check
+        .limit(1)
+        .get();
 
       let status = 'pending';
       let matchedAt = null;
+      let txIdToMark = null;
 
       if (!txSnap.empty) {
-        const txData = txSnap.docs[0].data();
-        if (txData.amount === cleanAmount) {
+        const txData = txSnap.docs[0].data() as any;
+        if (Math.abs(txData.amount - cleanAmount) < 0.1) {
           status = 'approved';
           matchedAt = new Date().toISOString();
+          txIdToMark = txSnap.docs[0].id;
         }
       }
 
       // 2. Save the deposit request
-      const depositRef = await addDoc(collection(db, 'userDeposits'), {
+      const depositRef = await db.collection('userDeposits').add({
         userId,
         userName,
         method,
@@ -145,11 +166,19 @@ async function startServer() {
         createdAt: new Date().toISOString()
       });
 
-      // 3. If auto-approved, increment balance
+      // 3. If auto-approved, increment balance and mark transaction as used
       if (status === 'approved') {
-        const userRef = doc(db, 'users', userId);
-        await updateDoc(userRef, {
-          balance: increment(cleanAmount)
+        // Mark transaction as USED
+        if (txIdToMark) {
+          await db.collection('transactions').doc(txIdToMark).update({
+            isUsed: true,
+            matchedAt: new Date().toISOString(),
+            matchedTo: depositRef.id
+          });
+        }
+
+        await db.collection('users').doc(userId).update({
+          balance: FieldValue.increment(cleanAmount)
         });
         console.log(`[RETRO-TOPUP] Auto-approved existing transaction for user: ${userId}`);
       }
@@ -164,9 +193,9 @@ async function startServer() {
   // Helper to notify merchant webhook
   const notifyMerchant = async (userId: string, requestId: string, depositData: any, amount: number, trxId: string, sender: string, provider: string) => {
     try {
-      const userSnap = await getDocs(query(collection(db, 'users'), where('__name__', '==', userId), limit(1)));
-      if (userSnap.empty) return;
-      const userData = userSnap.docs[0].data();
+      const userSnap = await db.collection('users').doc(userId).get();
+      if (!userSnap.exists) return;
+      const userData = userSnap.data() as any;
       const apiSecret = userData.apiSecret || 'none';
       const finalWebhookUrl = depositData.webhookUrl || userData.webhookUrl;
 
@@ -205,14 +234,14 @@ async function startServer() {
       
       // 1. Pre-fetch all data to avoid O(n^2) database queries in loops
       const [pendingSystemSnap, pendingMerchantSnap, recentTransactionsSnap, recentSmsSnap] = await Promise.all([
-        getDocs(query(collection(db, 'userDeposits'), where('status', '==', 'pending'))),
-        getDocs(query(collection(db, 'depositRequests'), where('status', '==', 'pending'))),
-        getDocs(query(collection(db, 'transactions'), limit(500))), // Fetch a good window of recent transactions
-        getDocs(query(collection(db, 'raw_sms'), limit(300))) // Fetch recent logs for body search
+        db.collection('userDeposits').where('status', '==', 'pending').get(),
+        db.collection('depositRequests').where('status', '==', 'pending').get(),
+        db.collection('transactions').limit(500).get(), // Fetch a good window of recent transactions
+        db.collection('raw_sms').limit(300).get() // Fetch recent logs for body search
       ]);
 
-      const transactions = recentTransactionsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      const smsLogs = recentSmsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const transactions = recentTransactionsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      const smsLogs = recentSmsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
 
       console.log(`[RESCAN] Loaded ${pendingSystemSnap.size} system and ${pendingMerchantSnap.size} merchant requests.`);
       console.log(`[RESCAN] Matching against ${transactions.length} transactions and ${smsLogs.length} SMS logs.`);
@@ -222,76 +251,151 @@ async function startServer() {
         const trxId = (data.trxId || '').toUpperCase().trim();
         const amount = Number(data.amount);
         const userId = data.userId;
+        const senderPhone = (data.senderPhone || '').trim();
 
-        if (!trxId || !amount) {
-          console.log(`[RESCAN] Skipping invalid request ${docRef.id}: TrxID=${trxId}, Amt=${amount}`);
+        if (!amount) {
+          console.log(`[RESCAN] Skipping invalid request ${docRef.id}: Amt=${amount}`);
           return false;
         }
 
-        console.log(`[RESCAN] Attempting match for ${trxId} (${amount} TK)`);
+        console.log(`[RESCAN] Attempting match for Request ${docRef.id} (${amount} TK) - TrxID: ${trxId || 'N/A'}`);
 
-        // Strategy A: Direct Global Query by TrxID (Most Reliable)
-        const txQ = query(collection(db, 'transactions'), where('trxId', '==', trxId), limit(1));
-        const txSnap = await getDocs(txQ);
+        // Strategy A: Match by Exact TrxID (High confidence)
+        if (trxId && trxId.length > 5 && !trxId.startsWith('EXT_')) {
+          const txSnap = await db.collection('transactions')
+            .where('trxId', '==', trxId)
+            .where('isUsed', '!=', true) // DO NOT USE ALREADY USED TRANSACTIONS
+            .limit(1)
+            .get();
 
-        if (!txSnap.empty) {
-          const txData = txSnap.docs[0].data();
-          if (Math.abs(Number(txData.amount) - amount) < 0.1) {
-            console.log(`[RESCAN MATCH] Strategy A: TrxID ${trxId} verified in database.`);
-            if (isSystem) {
-              await updateDoc(doc(db, 'userDeposits', docRef.id), {
-                status: 'approved',
-                matchedAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-                matchingNote: 'Auto-matched via Transaction ID'
-              });
-              await updateDoc(doc(db, 'users', userId), { balance: increment(amount) });
-            } else {
-              await updateDoc(doc(db, 'depositRequests', docRef.id), {
-                status: 'matched',
-                matchedAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-                matchedTransactionId: txSnap.docs[0].id,
-                matchingNote: 'Auto-matched via Transaction ID'
-              });
+          if (!txSnap.empty) {
+            const txData = txSnap.docs[0].data() as any;
+            if (Math.abs(Number(txData.amount) - amount) < 0.1) {
+              console.log(`[RESCAN MATCH] Strategy A: TrxID ${trxId} verified.`);
               
-              // Trigger Webhook for Merchant
-              await notifyMerchant(userId, docRef.id, data, amount, trxId, txData.sender || "Unknown", txData.provider || "Unknown");
+              // Mark the transaction as USED immediately to prevent double usage
+              await db.collection('transactions').doc(txSnap.docs[0].id).update({ 
+                isUsed: true, 
+                matchedAt: new Date().toISOString(),
+                matchedTo: docRef.id 
+              });
+
+              if (isSystem) {
+                await db.collection('userDeposits').doc(docRef.id).update({
+                  status: 'approved',
+                  matchedAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString(),
+                  matchingNote: 'Rescan: Matched via Transaction ID'
+                });
+                await db.collection('users').doc(userId).update({ balance: FieldValue.increment(amount) });
+              } else {
+                await db.collection('depositRequests').doc(docRef.id).update({
+                  status: 'matched',
+                  matchedAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString(),
+                  matchedTransactionId: txSnap.docs[0].id,
+                  matchingNote: 'Rescan: Matched via Transaction ID'
+                });
+                
+                await notifyMerchant(userId, docRef.id, data, amount, trxId, txData.customerPhone || txData.sender || "Unknown", txData.provider || "Unknown");
+              }
+              return true;
             }
-            return true;
-          } else {
-            console.warn(`[RESCAN] TrxID ${trxId} found, but amount mismatch: Req=${amount} vs DB=${txData.amount}`);
           }
         }
 
-        // Strategy B: Deep search in pre-fetched raw SMS bodies (Fall-back for unparsed SMS)
-        const smsMatch = smsLogs.find((sms: any) => {
-          const body = (sms.message || '').toUpperCase();
-          return body.includes(trxId) && (body.includes(amount.toString()) || body.includes(amount.toLocaleString()));
-        });
+        // Strategy B: Match by Amount + Phone (Medium confidence)
+        if (amount > 0) {
+          // Look for transactions with matching amount and NOT used
+          const potentialTxs = transactions.filter(tx => 
+            Math.abs(tx.amount - amount) < 0.1 && 
+            tx.userId === userId &&
+            tx.isUsed !== true // SKIP USED ONES
+          );
 
-        if (smsMatch) {
-          console.log(`[RESCAN MATCH] Strategy B: TrxID ${trxId} found in raw SMS logs!`);
-          if (isSystem) {
-            await updateDoc(doc(db, 'userDeposits', docRef.id), {
-              status: 'approved',
-              matchedAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-              matchingNote: 'Auto-matched via Deep SMS Search'
-            });
-            await updateDoc(doc(db, 'users', userId), { balance: increment(amount) });
-          } else {
-            await updateDoc(doc(db, 'depositRequests', docRef.id), {
-              status: 'matched',
-              matchedAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-              matchingNote: 'Auto-matched via Deep SMS Search'
-            });
+          if (potentialTxs.length > 0) {
+            let matchedTx = null;
 
-            // Trigger Webhook for Merchant
-            await notifyMerchant(userId, docRef.id, data, amount, trxId, smsMatch.sender || "Unknown", smsMatch.provider || "Unknown");
+            // If we have a sender phone, try to match it
+            if (senderPhone) {
+              const cleanReqPhone = senderPhone.slice(-10);
+              matchedTx = potentialTxs.find(tx => {
+                const txPhone = (tx.customerPhone || tx.sender || '').slice(-10);
+                return txPhone === cleanReqPhone;
+              });
+            }
+
+            // If still no match but only ONE potential transaction exists for this amount, fuzzy match it
+            if (!matchedTx && potentialTxs.length === 1 && (!senderPhone || senderPhone === "")) {
+              matchedTx = potentialTxs[0];
+            }
+
+            if (matchedTx) {
+              console.log(`[RESCAN MATCH] Strategy B: Amount/Phone match for Request ${docRef.id}`);
+              const finalTrxId = trxId || matchedTx.trxId;
+
+              // Mark transaction as USED
+              await db.collection('transactions').doc(matchedTx.id).update({
+                isUsed: true,
+                matchedAt: new Date().toISOString(),
+                matchedTo: docRef.id
+              });
+              
+              if (isSystem) {
+                await db.collection('userDeposits').doc(docRef.id).update({
+                  status: 'approved',
+                  matchedAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString(),
+                  trxId: finalTrxId,
+                  matchingNote: 'Rescan: Matched via Amount/Phone'
+                });
+                await db.collection('users').doc(userId).update({ balance: FieldValue.increment(amount) });
+              } else {
+                await db.collection('depositRequests').doc(docRef.id).update({
+                  status: 'matched',
+                  matchedAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString(),
+                  trxId: finalTrxId,
+                  matchedTransactionId: matchedTx.id,
+                  matchingNote: 'Rescan: Matched via Amount/Phone'
+                });
+                
+                await notifyMerchant(userId, docRef.id, data, amount, finalTrxId, matchedTx.customerPhone || matchedTx.sender || "Unknown", matchedTx.provider || "Unknown");
+              }
+              return true;
+            }
           }
-          return true;
+        }
+
+        // Strategy C: Deep search in raw SMS logs (Last resort)
+        if (trxId && trxId.length > 5) {
+          const smsMatch = smsLogs.find((sms: any) => {
+            const body = (sms.message || '').toUpperCase();
+            return body.includes(trxId) && (body.includes(amount.toString()) || body.includes(amount.toLocaleString()));
+          });
+
+          if (smsMatch) {
+            console.log(`[RESCAN MATCH] Strategy C: Found in raw logs for Request ${docRef.id}`);
+            if (isSystem) {
+              await db.collection('userDeposits').doc(docRef.id).update({
+                status: 'approved',
+                matchedAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                matchingNote: 'Rescan: Matched via Deep SMS Search'
+              });
+              await db.collection('users').doc(userId).update({ balance: FieldValue.increment(amount) });
+            } else {
+              await db.collection('depositRequests').doc(docRef.id).update({
+                status: 'matched',
+                matchedAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                matchingNote: 'Rescan: Matched via Deep SMS Search'
+              });
+
+              await notifyMerchant(userId, docRef.id, data, amount, trxId, smsMatch.sender || "Unknown", smsMatch.provider || "Unknown");
+            }
+            return true;
+          }
         }
 
         return false;
@@ -318,11 +422,12 @@ async function startServer() {
       // 4. Update Device Offline Statuses (Cleanup)
       try {
         const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-        const onlineDevicesSnap = await getDocs(query(collection(db, 'devices'), where('status', '==', 'online')));
+        const onlineDevicesSnap = await db.collection('devices').where('status', '==', 'online').get();
         for (const d of onlineDevicesSnap.docs) {
-          const lastSeen = d.data().lastSeen || d.data().lastActive;
+          const data = d.data() as any;
+          const lastSeen = data.lastSeen || data.lastActive;
           if (!lastSeen || lastSeen < thirtyMinsAgo) {
-            await updateDoc(doc(db, 'devices', d.id), { status: 'offline' });
+            await db.collection('devices').doc(d.id).update({ status: 'offline' });
           }
         }
       } catch (e) {
@@ -346,20 +451,13 @@ async function startServer() {
     }
 
     try {
-      const ai = new GoogleGenAI({
-        apiKey: process.env.GEMINI_API_KEY,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          }
-        }
+      const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+      const model = (genAI as any).getGenerativeModel({ 
+        model: "gemini-1.5-flash", 
       });
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: `
-          Extract transaction details from this Bangladeshi mobile money SMS: "${message}".
-          Return JSON format: 
+      const prompt = `Extract transaction details from this Bangladeshi mobile money SMS: "${message}".
+          Return ONLY JSON format: 
           {
             "provider": "bKash | Nagad | Rocket | Upay | Unknown",
             "amount": number,
@@ -367,19 +465,19 @@ async function startServer() {
             "sender": "string",
             "transactionTime": "ISO string if possible, else null",
             "type": "received | sent | cashout | payment"
-          }
-          Only return the JSON block.
-        `
-      });
+          }`;
 
-      const responseText = response.text;
+      const result = await model.generateContent(prompt);
+      const response = result.response;
+      const responseText = response.text();
+      
       const jsonMatch = responseText?.match(/\{[\s\S]*\}/);
       
-      if (jsonMatch) {
+      if (jsonMatch && jsonMatch.length > 0) {
         const data = JSON.parse(jsonMatch[0]);
         res.json({ status: "success", data });
       } else {
-        throw new Error("Could not parse AI response");
+        throw new Error("Could not parse AI response: " + responseText);
       }
     } catch (error) {
       console.error("AI Extraction Error:", error);
@@ -406,23 +504,22 @@ async function startServer() {
       let userData = null;
 
       if (apiKey) {
-        const usersRef = collection(db, 'users');
         let qUser;
         if (apiSecret) {
-          qUser = query(usersRef, where('apiKey', '==', apiKey), where('apiSecret', '==', apiSecret), limit(1));
+          qUser = db.collection('users').where('apiKey', '==', apiKey).where('apiSecret', '==', apiSecret).limit(1);
         } else {
           // Lenient lookup if secret is missing (Common in some SMS apps)
-          qUser = query(usersRef, where('apiKey', '==', apiKey), limit(1));
+          qUser = db.collection('users').where('apiKey', '==', apiKey).limit(1);
         }
         
-        const userSnap = await getDocs(qUser);
+        const userSnap = await qUser.get();
         if (!userSnap.empty) {
           userId = userSnap.docs[0].id;
-          userData = userSnap.docs[0].data();
+          userData = userSnap.docs[0].data() as any;
         }
       }
 
-      const rawSmsRef = await addDoc(collection(db, 'raw_sms'), {
+      const rawSmsRef = await db.collection('raw_sms').add({
         userId,
         deviceId,
         sender: sender || "System",
@@ -442,60 +539,126 @@ async function startServer() {
         });
       }
 
+      // 3.5 Check Plan Expiry
+      if (userData?.planExpiry) {
+        const expiry = new Date(userData.planExpiry);
+        if (expiry < new Date()) {
+          console.warn(`[PLAN EXPIRED] User: ${userId} attempt with expired plan.`);
+          return res.status(200).json({
+            status: false,
+            success: false,
+            message: "আপনার প্যাকেজের মেয়াদ শেষ হয়ে গেছে। দয়া করে রিনিউ করুন।",
+            error: "PLAN_EXPIRED"
+          });
+        }
+      }
+
       // 4. Extraction Logic (Prioritize structured data from request body if app already parsed it)
       let amount = parseFloat(req.body.amount || req.body.amount_tk || req.body.tk || req.body.value || req.body.money || req.body.Price || "0");
       let trxId = (req.body.trxId || req.body.transaction_id || req.body.txn_id || req.body.trx_id || req.body.txid || req.body.tid || req.body.TrxID || "")?.toString().toUpperCase().trim();
       let provider = (req.body.provider || req.body.method || req.body.type || req.body.gateway || req.body.operator || req.body.Provider || "Unknown")?.toString();
+      let customerPhone = (req.body.customer_phone || req.body.sender_phone || req.body.phone_number || "")?.toString();
 
       // If structured data is missing, use Regex from message body
       if (message && (amount <= 0 || !trxId)) {
         // Robust patterns for various providers and languages
         const patterns = [
-          // bKash
-          /You have received (?:Tk )?([\d,]+\.?\d*) from (\d+)\. .*TrxID ([A-Z0-9]+)/i,
-          /received (?:Tk )?([\d,]+\.?\d*).*TrxID ([A-Z0-9]+)/i,
-          // Nagad
-          /Tk ([\d,]+\.?\d*) Received from (\d+)\. .*TxnID[:\s]+([A-Z0-9]+)/i,
-          /Received (?:Tk )?([\d,]+\.?\d*).*TxnID[:\s]+([A-Z0-9]+)/i,
-          // Rocket
-          /Tk\. ([\d,]+\.?\d*) received from (\d+)\. .*TrxID[:\s]+([A-Z0-9]+)/i,
-          /received (?:Tk )?([\d,]+\.?\d*).*TrxID[:\s]+([A-Z0-9]+)/i,
-          // Generic
-          /(?:Tk|Amount|টাকা|পরিমাণ)[:\s]*([\d,]+\.?\d*)/i,
-          /(?:TrxID|TxnID|ID|ট্রানজেকশন)[:\s]*([A-Z0-9]{8,})/i
+          // bKash Received (Standard)
+          {
+            regex: /You have received (?:Tk )?([\d,]+\.?\d*) from (\d+)\. .*TrxID ([A-Z0-9]+)/i,
+            amtIdx: 1, phoneIdx: 2, trxIdx: 3, prov: "bKash"
+          },
+          // bKash Cash In
+          {
+            regex: /Cash In (?:Tk )?([\d,]+\.?\d*) from (\d+) is successful\. .*TrxID ([A-Z0-9]+)/i,
+            amtIdx: 1, phoneIdx: 2, trxIdx: 3, prov: "bKash"
+          },
+          // bKash Generic
+          {
+            regex: /received (?:Tk )?([\d,]+\.?\d*).*TrxID ([A-Z0-9]+)/i,
+            amtIdx: 1, trxIdx: 2, prov: "bKash"
+          },
+          // Nagad Received
+          {
+            regex: /Tk ([\d,]+\.?\d*) Received from (\d+)\. .*TxnID[:\s]+([A-Z0-9]+)/i,
+            amtIdx: 1, phoneIdx: 2, trxIdx: 3, prov: "Nagad"
+          },
+          // Nagad Cash In
+          {
+            regex: /Cash In (?:Tk )?([\d,]+\.?\d*) from (\d+) successful\. .*TxnID[:\s]+([A-Z0-9]+)/i,
+            amtIdx: 1, phoneIdx: 2, trxIdx: 3, prov: "Nagad"
+          },
+          // Nagad Generic
+          {
+            regex: /Received (?:Tk )?([\d,]+\.?\d*).*TxnID[:\s]+([A-Z0-9]+)/i,
+            amtIdx: 1, trxIdx: 2, prov: "Nagad"
+          },
+          // Rocket Received
+          {
+            regex: /Tk\. ([\d,]+\.?\d*) received from (\d+)\. .*TrxID[:\s]+([A-Z0-9]+)/i,
+            amtIdx: 1, phoneIdx: 2, trxIdx: 3, prov: "Rocket"
+          },
+          // Generic Payment Matching
+          {
+            regex: /(?:Tk|Amount|টাকা|পরিমাণ)[:\s]*([\d,]+\.?\d*)/i,
+            amtIdx: 1
+          },
+          {
+            regex: /(?:TrxID|TxnID|ID|ট্রানজেকশন)[:\s]*([A-Z0-9]{8,})/i,
+            trxIdx: 1
+          }
         ];
 
-        for (const pattern of patterns) {
-          const m = message.match(pattern);
+        for (const p of patterns) {
+          const m = message.match(p.regex);
           if (m) {
-            if (m.length >= 3) {
-              if (amount <= 0) amount = parseFloat(m[1].replace(/,/g, ''));
-              if (!trxId) trxId = m[m.length - 1].trim().toUpperCase();
-            } else if (m.length === 2) {
-              // Try to guess if it's amount or trxId
-              if (m[1].match(/^[\d,]+\.?\d*$/) && amount <= 0) {
-                amount = parseFloat(m[1].replace(/,/g, ''));
-              } else if (m[1].match(/[A-Z0-9]{8,}/i) && !trxId) {
-                trxId = m[1].trim().toUpperCase();
-              }
-            }
+            if (p.amtIdx && amount <= 0) amount = parseFloat(m[p.amtIdx].replace(/,/g, ''));
+            if (p.trxIdx && !trxId) trxId = m[p.trxIdx].trim().toUpperCase();
+            if (p.phoneIdx && !customerPhone) customerPhone = m[p.phoneIdx];
+            if (p.prov && provider === "Unknown") provider = p.prov;
           }
         }
         
-        // Auto-detect provider if missing
+        // Auto-detect provider if still missing
         if (provider === "Unknown") {
-          if (message.toLowerCase().includes("bkash")) provider = "bKash";
-          else if (message.toLowerCase().includes("nagad")) provider = "Nagad";
-          else if (message.toLowerCase().includes("rocket")) provider = "Rocket";
+          const lowerBody = message.toLowerCase();
+          if (lowerBody.includes("bkash")) provider = "bKash";
+          else if (lowerBody.includes("nagad")) provider = "Nagad";
+          else if (lowerBody.includes("rocket")) provider = "Rocket";
+          else if (lowerBody.includes("upay")) provider = "Upay";
+        }
+
+        // Strategy AI: Fallback to Gemini if regex failed and we have an API key
+        if ((amount <= 0 || !trxId || trxId.length < 5) && process.env.GEMINI_API_KEY) {
+          try {
+            console.log("[AI FALLBACK] Attempting AI extraction...");
+            const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+            const model = (genAI as any).getGenerativeModel({ model: "gemini-1.5-flash" });
+            const prompt = `Extract transaction details (provider, amount, trxId, customerPhone) from this SMS: "${message}". 
+              Return ONLY JSON: {"provider": "item", "amount": number, "trxId": "string", "customerPhone": "string"}`;
+            
+            const result = await model.generateContent(prompt);
+            const aiData = JSON.parse(result.response.text().match(/\{[\s\S]*\}/)?.[0] || "{}");
+            
+            if (aiData.amount > 0 && amount <= 0) amount = aiData.amount;
+            if (aiData.trxId && (!trxId || trxId.length < 5)) trxId = aiData.trxId.toUpperCase().trim();
+            if (aiData.customerPhone && !customerPhone) customerPhone = aiData.customerPhone;
+            if (aiData.provider && provider === "Unknown") provider = aiData.provider;
+            
+            console.log(`[AI SUCCESS] Extracted: ${trxId}, ${amount}`);
+          } catch (aiErr) {
+            console.error("[AI FALLBACK ERROR]", aiErr);
+          }
         }
       }
+
+      console.log(`[PARSED] Amt: ${amount}, TrxID: ${trxId}, Phone: ${customerPhone}, Prov: ${provider}`);
 
       // 5. If we have a valid transaction, save and match
       if (amount > 0 || trxId) {
         // Prevent duplicate processing of the same TrxID for the same user
-        if (trxId) {
-          const qDup = query(collection(db, 'transactions'), where('userId', '==', userId), where('trxId', '==', trxId), limit(1));
-          const dupSnap = await getDocs(qDup);
+        if (trxId && trxId.length > 5) {
+          const dupSnap = await db.collection('transactions').where('userId', '==', userId).where('trxId', '==', trxId).limit(1).get();
           if (!dupSnap.empty) {
             console.log(`[SMS] Duplicate TrxID detected and skipped: ${trxId}`);
             return res.status(200).json({ status: true, success: true, message: "Duplicate skipping", processed: false });
@@ -508,26 +671,31 @@ async function startServer() {
           provider: provider || "Unknown",
           amount,
           trxId: trxId || "EXT_" + Math.random().toString(36).substring(7).toUpperCase(),
-          sender: sender || "Unknown",
+          customerPhone: customerPhone || "Unknown",
+          sender: sender || "System", // Service center number
           message: message || `Data: ${amount} TK`,
           createdAt: new Date().toISOString()
         };
 
-        const txRef = await addDoc(collection(db, 'transactions'), txData);
-        await updateDoc(doc(db, 'raw_sms', rawSmsRef.id), { status: 'processed', transactionId: txRef.id });
+        const txRef = await db.collection('transactions').add(txData);
+        await db.collection('raw_sms').doc(rawSmsRef.id).update({ 
+          status: 'processed', 
+          transactionId: txRef.id,
+          extractedTrxId: trxId || null,
+          extractedAmount: amount || null
+        });
 
         // Update Device Status (Upsert)
         if (deviceId && deviceId !== 'gateway_api') {
-          const dRef = query(collection(db, 'devices'), where('deviceId', '==', deviceId), limit(1));
-          const dSnap = await getDocs(dRef);
+          const dSnap = await db.collection('devices').where('deviceId', '==', deviceId).limit(1).get();
           if (!dSnap.empty) {
-            await updateDoc(doc(db, 'devices', dSnap.docs[0].id), {
+            await db.collection('devices').doc(dSnap.docs[0].id).update({
               lastSeen: new Date().toISOString(),
               status: 'online'
             });
           } else {
             // New device seen via SMS
-            await addDoc(collection(db, 'devices'), {
+            await db.collection('devices').add({
               userId,
               deviceId,
               deviceName: provider || "SMS Gateway",
@@ -540,13 +708,12 @@ async function startServer() {
         }
 
         // 6. Intelligent Matching Engine
-        const depositRef = collection(db, 'depositRequests');
+        const depositRef = db.collection('depositRequests');
         let matchedDoc = null;
 
         // Step 6a: Match by Exact TrxID (Highest confidence)
-        if (trxId) {
-          const qTrx = query(depositRef, where('userId', '==', userId), where('trxId', '==', trxId), where('status', '==', 'pending'), limit(1));
-          const snap = await getDocs(qTrx);
+        if (trxId && trxId.length > 5 && !trxId.startsWith('EXT_')) {
+          const snap = await depositRef.where('userId', '==', userId).where('trxId', '==', trxId).where('status', '==', 'pending').limit(1).get();
           if (!snap.empty) {
             matchedDoc = snap.docs[0];
             console.log(`[MATCH] High confidence TrxID match: ${trxId}`);
@@ -555,19 +722,21 @@ async function startServer() {
 
         // Step 6b: Match by Amount + Phone Number (Medium confidence)
         if (!matchedDoc && amount > 0) {
-          const qAmt = query(depositRef, where('userId', '==', userId), where('amount', '==', amount), where('status', '==', 'pending'));
-          const snap = await getDocs(qAmt);
+          const snap = await depositRef.where('userId', '==', userId).where('amount', '==', amount).where('status', '==', 'pending').get();
           if (!snap.empty) {
-            const cleanSender = sender?.slice(-10);
-            matchedDoc = snap.docs.find(d => {
-              const data = d.data() as any;
-              return data.senderPhone && data.senderPhone.includes(cleanSender);
-            }) || null;
+            // Try matching with extracted customer phone
+            if (customerPhone) {
+              const cleanCustomerPhone = customerPhone.slice(-10);
+              matchedDoc = snap.docs.find(d => {
+                const data = d.data() as any;
+                return data.senderPhone && data.senderPhone.includes(cleanCustomerPhone);
+              }) || null;
+            }
 
             // Fallback: If only one request exists for this amount and no phone was specified, auto-approve
             if (!matchedDoc && snap.size === 1) {
               const singleData = snap.docs[0].data() as any;
-              if (!singleData.senderPhone) {
+              if (!singleData.senderPhone || singleData.senderPhone.trim() === "") {
                 matchedDoc = snap.docs[0];
                 console.log(`[MATCH] Unique amount match: ${amount}`);
               }
@@ -578,12 +747,24 @@ async function startServer() {
         // 7. Update Deposit Status and Notify Webhook
         if (matchedDoc) {
           const depositData = matchedDoc.data() as any;
-          await updateDoc(doc(db, 'depositRequests', matchedDoc.id), {
+          const matchNote = trxId ? `Matched via TrxID: ${trxId}` : `Matched via Amount/Phone: ${amount}`;
+          
+          await db.collection('depositRequests').doc(matchedDoc.id).update({
             status: 'matched',
             matchedTransactionId: txRef.id,
             matchedAt: new Date().toISOString(),
-            trxId: depositData.trxId || trxId // Save the extracted ID if empty
+            trxId: depositData.trxId || trxId, // Save the extracted ID if empty
+            matchingNote: matchNote
           });
+
+          // Mark the transaction as USED to prevent reusing it for another request
+          await db.collection('transactions').doc(txRef.id).update({
+            isUsed: true,
+            matchedAt: new Date().toISOString(),
+            matchedTo: matchedDoc.id
+          });
+
+          console.log(`[MATCH SUCCESS] Request ${matchedDoc.id} matched!`);
 
           // Webhook Trigger
           const finalWebhookUrl = depositData.webhookUrl || userData?.webhookUrl;
@@ -601,13 +782,16 @@ async function startServer() {
                 requestId: matchedDoc.id,
                 externalId: depositData.externalId,
                 amount,
-                trxId,
-                sender,
+                trxId: trxId || depositData.trxId,
+                sender: customerPhone || "Unknown",
                 provider: provider || "Unknown",
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
+                note: matchNote
               })
             }).catch(e => console.error("[WEBHOOK ERROR]:", e));
           }
+        } else {
+          console.log(`[NO MATCH] No pending request found for TrxID: ${trxId}, Amt: ${amount}`);
         }
 
         // 8. System Balance Topup Logic (Matching "Add Funds" requests)
@@ -615,19 +799,17 @@ async function startServer() {
         // Note: We check userDeposits regardless of admin status for better robustness in testing,
         // but normally only admins should receive these SMS.
         if (trxId && amount > 0) {
-          const userDepositsRef = collection(db, 'userDeposits');
+          const userDepositsRef = db.collection('userDeposits');
           let topupDoc = null;
 
-          // Try match by TrxID
-          const qTrx = query(userDepositsRef, where('trxId', '==', trxId), where('status', '==', 'pending'), limit(1));
-          const topupSnap = await getDocs(qTrx);
+          // Try match by TrxID (Ensure it hasn't been used yet)
+          const topupSnap = await userDepositsRef.where('trxId', '==', trxId).where('status', '==', 'pending').limit(1).get();
           
           if (!topupSnap.empty) {
             topupDoc = topupSnap.docs[0];
           } else {
             // Fuzzy match by amount (Only if a single pending deposit exists for this amount)
-            const qAmt = query(userDepositsRef, where('amount', '==', amount), where('status', '==', 'pending'));
-            const amtSnap = await getDocs(qAmt);
+            const amtSnap = await userDepositsRef.where('amount', '==', amount).where('status', '==', 'pending').get();
             if (amtSnap.size === 1) {
               topupDoc = amtSnap.docs[0];
               console.log(`[TOPUP] Fuzzy match by amount: ${amount}`);
@@ -635,21 +817,34 @@ async function startServer() {
           }
 
           if (topupDoc) {
-            const depositData = topupDoc.data();
+            // Check if this transaction is already linked to another deposit (Security second check)
+            const txCheck = await db.collection('transactions').doc(txRef.id).get();
+            if (txCheck.exists && (txCheck.data() as any).isUsed) {
+              console.log(`[TOPUP SKIP] Transaction ${txRef.id} already used for another match.`);
+              return;
+            }
+
+            const depositData = topupDoc.data() as any;
             console.log(`[TOPUP] Processing balance increase for user: ${depositData.userId}`);
             
             // 1. Update deposit status
-            await updateDoc(doc(db, 'userDeposits', topupDoc.id), {
+            await db.collection('userDeposits').doc(topupDoc.id).update({
               status: 'approved',
               matchedTrxId: trxId,
               matchedAt: new Date().toISOString(),
               updatedAt: new Date().toISOString()
             });
 
-            // 2. Increment user balance
-            const userToTopupRef = doc(db, 'users', depositData.userId);
-            await updateDoc(userToTopupRef, {
-              balance: increment(amount)
+            // 2. Mark Transaction as Used
+            await db.collection('transactions').doc(txRef.id).update({
+              isUsed: true,
+              matchedAt: new Date().toISOString(),
+              matchedTo: topupDoc.id
+            });
+
+            // 3. Increment user balance
+            await db.collection('users').doc(depositData.userId).update({
+              balance: FieldValue.increment(amount)
             });
 
             console.log(`[TOPUP SUCCESS] User ${depositData.userId} balance increased by ${amount}`);
@@ -712,9 +907,7 @@ async function startServer() {
 
     try {
       // 1. Verify credentials
-      const usersRef = collection(db, 'users');
-      const q = query(usersRef, where('apiKey', '==', apiKey), where('apiSecret', '==', apiSecret), limit(1));
-      const userSnap = await getDocs(q);
+      const userSnap = await db.collection('users').where('apiKey', '==', apiKey).where('apiSecret', '==', apiSecret).limit(1).get();
 
       if (userSnap.empty) {
         return res.status(401).json({ 
@@ -725,7 +918,7 @@ async function startServer() {
       }
 
       const userId = userSnap.docs[0].id;
-      const userProfile = userSnap.docs[0].data();
+      const userProfile = userSnap.docs[0].data() as any;
 
       // Check if user is active
       if (userProfile.status === 'inactive' || userProfile.status === 'suspended') {
@@ -736,14 +929,37 @@ async function startServer() {
         });
       }
 
+      // Check Plan Expiry
+      if (userProfile.planExpiry) {
+        const expiry = new Date(userProfile.planExpiry);
+        if (expiry < new Date()) {
+          return res.status(403).json({ 
+            status: false, 
+            message: "আপনার প্যাকেজের মেয়াদ শেষ হয়ে গেছে। দয়া করে রিনিউ করুন।",
+            error_code: "PLAN_EXPIRED"
+          });
+        }
+      }
+
       // 2. Register/Update Device
-      const devicesRef = collection(db, 'devices');
       let deviceSnap;
       const cleanDeviceId = (deviceId || '').toString().trim();
 
       if (cleanDeviceId) {
-        const qDevice = query(devicesRef, where('userId', '==', userId), where('deviceId', '==', cleanDeviceId), limit(1));
-        deviceSnap = await getDocs(qDevice);
+        deviceSnap = await db.collection('devices').where('userId', '==', userId).where('deviceId', '==', cleanDeviceId).limit(1).get();
+      }
+
+      // Check Device Limit (Only for NEW devices)
+      if (!deviceSnap || deviceSnap.empty) {
+        const activeDevicesSnap = await db.collection('devices').where('userId', '==', userId).get();
+        const limitCount = userProfile.planDeviceLimit || 1;
+        if (activeDevicesSnap.size >= limitCount) {
+          return res.status(403).json({ 
+            status: false, 
+            message: `আপনার প্যাকেজের ডিভাইস লিমিট (${limitCount}) শেষ হয়ে গেছে। আরও ডিভাইস কানেক্ট করতে আপগ্রেড করুন।`,
+            error_code: "DEVICE_LIMIT_REACHED"
+          });
+        }
       }
 
       const deviceData = {
@@ -759,10 +975,10 @@ async function startServer() {
 
       if (deviceSnap && !deviceSnap.empty) {
         // Update existing
-        await updateDoc(doc(db, 'devices', deviceSnap.docs[0].id), deviceData);
+        await db.collection('devices').doc(deviceSnap.docs[0].id).update(deviceData);
       } else {
         // Create new
-        await addDoc(devicesRef, deviceData);
+        await db.collection('devices').add(deviceData);
       }
 
       res.json({ 

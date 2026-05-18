@@ -6,10 +6,15 @@ export interface UserProfile {
   email: string;
   role: 'user' | 'admin';
   plan: string;
+  planExpiry?: string;
+  planDeviceLimit?: number;
   balance?: number;
   apiKey?: string;
   apiSecret?: string;
   webhookUrl?: string;
+  bkashNumber?: string;
+  nagadNumber?: string;
+  rocketNumber?: string;
   status: 'active' | 'suspended';
   createdAt: string;
 }
@@ -87,6 +92,8 @@ export interface PlanDefinition {
   id: string;
   name: string;
   price: number;
+  deviceLimit: number;
+  durationDays: number;
   features: string[];
   badge?: string;
   isPopular?: boolean;

@@ -118,9 +118,10 @@ export default function Dashboard({ user, profile, onLogout, onRefreshProfile }:
       }
     }
 
-    // 2. Check Device Limit
-    const maxDevices = profile.planDeviceLimit || 1; // Default 1 for free if not set
-    if (devices.length >= maxDevices) {
+    // 2. Check Device Limit (Admins have unlimited)
+    const isAdmin = profile.role === 'admin';
+    const maxDevices = profile.planDeviceLimit || 1; 
+    if (!isAdmin && devices.length >= maxDevices) {
       alert(`আপনার প্যাকেজের ডিভাইস লিমিট (${maxDevices}) শেষ হয়ে গেছে। আরও ডিভাইস কানেক্ট করতে প্যাকেজ আপগ্রেড করুন।`);
       setShowUpgradeModal(true);
       return;

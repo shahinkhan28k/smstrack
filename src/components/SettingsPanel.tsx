@@ -55,8 +55,9 @@ export default function SettingsPanel({ profile, onRefresh, onShowUpgrade }: Set
 
   const handleAddApiKey = async () => {
     if (!profile) return;
+    const isAdmin = profile.role === 'admin';
     const maxKeys = profile.planApiKeyLimit || 1;
-    if (apiKeys.length >= maxKeys) {
+    if (!isAdmin && apiKeys.length >= maxKeys) {
       alert(`আপনার প্যাকেজের এপিআই কি লিমিট (${maxKeys}) শেষ হয়ে গেছে। আরও কি জেনারেট করতে প্যাকেজ আপগ্রেড করুন।`);
       onShowUpgrade();
       return;
@@ -310,7 +311,7 @@ export default function SettingsPanel({ profile, onRefresh, onShowUpgrade }: Set
                   API Credentials (এপিআই কি ম্যানেজমেন্ট)
                 </h3>
                 <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-1">
-                  Plan Limit: {apiKeys.length} / {profile?.planApiKeyLimit || 1} Keys Active
+                  Plan Limit: {apiKeys.length} / {profile?.role === 'admin' ? 'Unlimited' : (profile?.planApiKeyLimit || 1)} Keys Active
                 </p>
               </div>
               

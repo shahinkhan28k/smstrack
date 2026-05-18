@@ -17,7 +17,7 @@ export default function AdminAllTransactions() {
     const unsub = onSnapshot(q, (snap) => {
       const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as Transaction));
       // Client-side sort
-      docs.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
+      docs.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
       setTransactions(docs.slice(0, 500));
       setLoading(false);
     });

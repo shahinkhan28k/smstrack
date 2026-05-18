@@ -1,59 +1,66 @@
 import express from "express";
 import path from "path";
+import cors from "cors";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import * as dotenv from "dotenv";
-import * as admin from 'firebase-admin';
-import { getFirestore } from 'firebase-admin/firestore';
+import { initializeApp, getApps, getApp } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import firebaseConfig from './firebase-applet-config.json';
 
 dotenv.config();
 
 // Initialize Firebase Admin for Server-side logic (bypass security rules)
-let db: admin.firestore.Firestore;
+let db: any;
 
-try {
-  if (!admin.apps || admin.apps.length === 0) {
-    admin.initializeApp({
-      projectId: firebaseConfig.projectId,
-    });
-  }
-  
-  const app = admin.apps[0];
-  const dbId = firebaseConfig.firestoreDatabaseId;
-  
-  if (dbId && dbId !== "(default)" && dbId.trim().length > 0) {
-    try {
-      db = getFirestore(app, dbId);
-    } catch (dbErr) {
-      console.error("Failed to init specific database ID, falling back to default:", dbErr);
-      db = admin.firestore();
+function getDb() {
+  if (db) return db;
+  try {
+    const apps = getApps();
+    let app;
+    if (apps.length === 0) {
+      app = initializeApp({
+        projectId: firebaseConfig.projectId,
+      });
+    } else {
+      app = getApp();
     }
-  } else {
-    db = admin.firestore();
+    const dbId = firebaseConfig.firestoreDatabaseId;
+    if (dbId && dbId !== "(default)" && dbId?.toString().trim().length > 0) {
+      db = getFirestore(app, dbId);
+    } else {
+      db = getFirestore(app);
+    }
+    return db;
+  } catch (e) {
+    console.error("Firebase Admin Init Error:", e);
+    db = getFirestore();
+    return db;
   }
-} catch (e) {
-  console.error("Firebase Admin Init Error:", e);
-  db = admin.firestore();
 }
 
-// Ensure db is defined
-if (!db) {
-    console.error("CRITICAL: Firebase DB initialization failed. Using mock or emergency fallback.");
-    // This should not happen with admin.firestore() fallback
-}
-
-const FieldValue = admin.firestore.FieldValue;
+// Lazy load FieldValue to ensure admin is initialized if needed
+const getFieldValue = () => FieldValue;
 
 async function startServer() {
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
+  const PORT = 3000;
+
+  // Initialize DB immediately
+  getDb();
 
   app.use(express.json());
+  app.use(cors());
+
+  // Simple request logger
+  app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    next();
+  });
 
   // API Routes
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok" });
+    res.json({ status: "ok", uptime: process.uptime() });
   });
 
   // External Website: Create Deposit Request
@@ -278,7 +285,7 @@ async function startServer() {
         }
 
         await db.collection('users').doc(userId).update({
-          balance: FieldValue.increment(cleanAmount)
+          balance: getFieldValue().increment(cleanAmount)
         });
         console.log(`[RETRO-TOPUP] Auto-approved existing transaction for user: ${userId}`);
       }
@@ -389,7 +396,7 @@ async function startServer() {
                   updatedAt: new Date().toISOString(),
                   matchingNote: 'Rescan: Matched via Transaction ID'
                 });
-                await db.collection('users').doc(userId).update({ balance: FieldValue.increment(amount) });
+                await db.collection('users').doc(userId).update({ balance: getFieldValue().increment(amount) });
               } else {
                 await db.collection('depositRequests').doc(docRef.id).update({
                   status: 'matched',
@@ -451,7 +458,7 @@ async function startServer() {
                   trxId: finalTrxId,
                   matchingNote: 'Rescan: Matched via Amount/Phone'
                 });
-                await db.collection('users').doc(userId).update({ balance: FieldValue.increment(amount) });
+                await db.collection('users').doc(userId).update({ balance: getFieldValue().increment(amount) });
               } else {
                 await db.collection('depositRequests').doc(docRef.id).update({
                   status: 'matched',
@@ -485,7 +492,7 @@ async function startServer() {
                 updatedAt: new Date().toISOString(),
                 matchingNote: 'Rescan: Matched via Deep SMS Search'
               });
-              await db.collection('users').doc(userId).update({ balance: FieldValue.increment(amount) });
+              await db.collection('users').doc(userId).update({ balance: getFieldValue().increment(amount) });
             } else {
               await db.collection('depositRequests').doc(docRef.id).update({
                 status: 'matched',
@@ -591,13 +598,34 @@ async function startServer() {
   const universalSmsHandler = async (req: express.Request, res: express.Response) => {
     try {
       // 1. Extract Credentials (Support all possible field names used by different apps)
-      const apiKey = (req.query.apiKey || req.body.apiKey || req.body.api_key || req.body.API_KEY || req.headers['x-api-key'])?.toString().trim();
-      const apiSecret = (req.query.apiSecret || req.body.apiSecret || req.body.secret_key || req.body.API_SECRET || req.headers['x-api-secret'])?.toString().trim();
+      const apiKey = (
+        req.query.apiKey || req.body.apiKey || req.body.api_key || req.body.API_KEY || 
+        req.body.token || req.body.key || req.body.auth_token ||
+        req.headers['x-api-key'] || req.headers['authorization']
+      )?.toString().trim();
+      
+      const apiSecret = (
+        req.query.apiSecret || req.body.apiSecret || req.body.secret_key || req.body.API_SECRET || 
+        req.body.secret || req.headers['x-api-secret']
+      )?.toString().trim();
       
       // 2. Extract SMS Content & Metadata
-      const message = (req.body.message || req.body.text || req.body.content || req.body.msg || req.body.SMS_MESSAGE || req.body.body || "")?.toString();
-      const sender = (req.body.sender || req.body.from || req.body.phone || req.body.SENDER_NUMBER || req.body.address || req.body.number || req.body.sender_number || "External App")?.toString();
-      const deviceId = (req.body.deviceId || req.body.device_id || req.body.DEVICE_ID || req.headers['x-device-id'] || "gateway_api")?.toString();
+      const message = (
+        req.body.message || req.body.text || req.body.content || req.body.msg || 
+        req.body.SMS_MESSAGE || req.body.body || req.body.sms_body || req.body.sms_message ||
+        req.body.SMSText || ""
+      )?.toString();
+
+      const sender = (
+        req.body.sender || req.body.from || req.body.phone || req.body.SENDER_NUMBER || 
+        req.body.address || req.body.number || req.body.sender_number || 
+        req.body.SMSAddress || "External App"
+      )?.toString();
+
+      const deviceId = (
+        req.body.deviceId || req.body.device_id || req.body.DEVICE_ID || 
+        req.body.android_id || req.headers['x-device-id'] || "gateway_api"
+      )?.toString();
 
       console.log(`[HTTP RECEIVE] Device: ${deviceId}, Msg: ${message?.substring(0, 50)}...`);
 
@@ -667,43 +695,57 @@ async function startServer() {
         const patterns = [
           // bKash Received (Standard)
           {
-            regex: /You have received (?:Tk )?([\d,]+\.?\d*) from (\d+)\. .*TrxID ([A-Z0-9]+)/i,
+            regex: /(?:You have received|রিসিভ).*?(?:Tk\s*)?([\d,]+\.?\d*).*?from\s*(\d+).*?Trx\s*ID\s*([A-Z0-9]+)/i,
             amtIdx: 1, phoneIdx: 2, trxIdx: 3, prov: "bKash"
           },
           // bKash Cash In
           {
-            regex: /Cash In (?:Tk )?([\d,]+\.?\d*) from (\d+) is successful\. .*TrxID ([A-Z0-9]+)/i,
+            regex: /(?:Cash\s*In|ক্যাশ\s*ইন).*?(?:Tk\s*)?([\d,]+\.?\d*).*?from\s*(\d+).*?Trx\s*ID\s*([A-Z0-9]+)/i,
             amtIdx: 1, phoneIdx: 2, trxIdx: 3, prov: "bKash"
           },
-          // bKash Generic
+          // bKash Payment (Received at Merchant)
           {
-            regex: /received (?:Tk )?([\d,]+\.?\d*).*TrxID ([A-Z0-9]+)/i,
+            regex: /(?:Payment|পেমেন্ট).*?(?:Tk\s*)?([\d,]+\.?\d*).*?from\s*(\d+).*?Trx\s*ID\s*([A-Z0-9]+)/i,
+            amtIdx: 1, phoneIdx: 2, trxIdx: 3, prov: "bKash"
+          },
+          // bKash Generic Fallback
+          {
+            regex: /(?:received|Success|In|from|রিসিভ|সফল).*?(?:Tk\s*)?([\d,]+\.?\d*).*?Trx\s*ID\s*([A-Z0-9]+)/i,
             amtIdx: 1, trxIdx: 2, prov: "bKash"
           },
           // Nagad Received
           {
-            regex: /Tk ([\d,]+\.?\d*) Received from (\d+)\. .*TxnID[:\s]+([A-Z0-9]+)/i,
+            regex: /(?:Received|রিসিভ).*?(?:Tk\s*)?([\d,]+\.?\d*).*?from\s*(\d+).*?Txn\s*ID[:\s]*([A-Z0-9]+)/i,
             amtIdx: 1, phoneIdx: 2, trxIdx: 3, prov: "Nagad"
           },
           // Nagad Cash In
           {
-            regex: /Cash In (?:Tk )?([\d,]+\.?\d*) from (\d+) successful\. .*TxnID[:\s]+([A-Z0-9]+)/i,
+            regex: /(?:Cash\s*In|ক্যাশ\s*ইন).*?(?:Tk\s*)?([\d,]+\.?\d*).*?from\s*(\d+).*?Txn\s*ID[:\s]*([A-Z0-9]+)/i,
             amtIdx: 1, phoneIdx: 2, trxIdx: 3, prov: "Nagad"
           },
-          // Nagad Generic
+          // Nagad Generic Fallback
           {
-            regex: /Received (?:Tk )?([\d,]+\.?\d*).*TxnID[:\s]+([A-Z0-9]+)/i,
+            regex: /(?:Received|In|Success|রিসিভ|সফল).*?(?:Tk\s*)?([\d,]+\.?\d*).*?Txn\s*ID[:\s]*([A-Z0-9]+)/i,
             amtIdx: 1, trxIdx: 2, prov: "Nagad"
           },
           // Rocket Received
           {
-            regex: /Tk\. ([\d,]+\.?\d*) received from (\d+)\. .*TrxID[:\s]+([A-Z0-9]+)/i,
+            regex: /Tk\.?\s*([\d,]+\.?\d*)\s*received from (\d+).*?Trx\s*ID[:\s]*([A-Z0-9]+)/i,
             amtIdx: 1, phoneIdx: 2, trxIdx: 3, prov: "Rocket"
           },
-          // Rocket Generic
+          // Rocket Generic Fallback
           {
-            regex: /received (?:Tk )?([\d,]+\.?\d*).*TrxID[:\s]+([A-Z0-9]+)/i,
+            regex: /(?:received|In|Success|রিসিভ|সফল).*?(?:Tk\s*)?([\d,]+\.?\d*).*?Trx\s*ID[:\s]*([A-Z0-9]+)/i,
             amtIdx: 1, trxIdx: 2, prov: "Rocket"
+          },
+          // Generic TrxID & Amount extraction (Last attempt)
+          {
+            regex: /(?:Trx\s*ID|Txn\s*ID|ID|আইডি)[:\s]*([A-Z0-9]{8,})/i,
+            trxIdx: 1
+          },
+          {
+            regex: /(?:Tk|Amt|Amount|টাকা|পরিমাণ)[:\s]*([\d,]+\.?\d*)/i,
+            amtIdx: 1
           },
           // Upay Received
           {
@@ -922,24 +964,31 @@ async function startServer() {
         }
 
         // 8. System Balance Topup Logic (Matching "Add Funds" requests)
-        // We allow this if the user is an admin OR if the SMS matches a pending user deposit
-        // Note: We check userDeposits regardless of admin status for better robustness in testing,
-        // but normally only admins should receive these SMS.
         if (trxId && amount > 0) {
           const userDepositsRef = db.collection('userDeposits');
           let topupDoc = null;
 
-          // Try match by TrxID (Ensure it hasn't been used yet)
-          const topupSnap = await userDepositsRef.where('trxId', '==', trxId).where('status', '==', 'pending').limit(1).get();
+          // Try match by TrxID (Must match user to ensure security)
+          const topupSnap = await userDepositsRef
+            .where('userId', '==', userId)
+            .where('trxId', '==', trxId)
+            .where('status', '==', 'pending')
+            .limit(1)
+            .get();
           
           if (!topupSnap.empty) {
             topupDoc = topupSnap.docs[0];
           } else {
-            // Fuzzy match by amount (Only if a single pending deposit exists for this amount)
-            const amtSnap = await userDepositsRef.where('amount', '==', amount).where('status', '==', 'pending').get();
+            // Fuzzy match by amount for the same user
+            const amtSnap = await userDepositsRef
+              .where('userId', '==', userId)
+              .where('amount', '==', amount)
+              .where('status', '==', 'pending')
+              .get();
+            
             if (amtSnap.size === 1) {
               topupDoc = amtSnap.docs[0];
-              console.log(`[TOPUP] Fuzzy match by amount: ${amount}`);
+              console.log(`[TOPUP] Fuzzy match by amount: ${amount} for user ${userId}`);
             }
           }
 
@@ -971,7 +1020,7 @@ async function startServer() {
 
             // 3. Increment user balance
             await db.collection('users').doc(depositData.userId).update({
-              balance: FieldValue.increment(amount)
+              balance: getFieldValue().increment(amount)
             });
 
             console.log(`[TOPUP SUCCESS] User ${depositData.userId} balance increased by ${amount}`);
@@ -1003,15 +1052,21 @@ async function startServer() {
   const smsEndpoints = [
     "/api/v1/store-transaction",
     "/api/v1/sms/receive",
+    "/api/v1/receive-sms",
     "/api/v1/receive",
     "/api/v1/callback",
     "/api/v1/sms/webhook",
     "/api/receive",
-    "/api/sms"
+    "/api/sms",
+    "/api/sms/callback",
+    "/sms-receive",
+    "/transaction/receive"
   ];
 
   smsEndpoints.forEach(endpoint => {
+    // Support both POST and GET for various gateway apps
     app.post(endpoint, universalSmsHandler);
+    app.get(endpoint, universalSmsHandler);
   });
 
 
@@ -1175,5 +1230,6 @@ async function startServer() {
 
 startServer().catch(err => {
   console.error("CRITICAL: Failed to start server:", err);
-  process.exit(1);
+  // Do not exit process in dev to keep logs available in builder UI
+  if (process.env.NODE_ENV === "production") process.exit(1);
 });

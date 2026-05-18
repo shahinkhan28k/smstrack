@@ -16,9 +16,30 @@ function getDb() {
   if (db) return db;
   try {
     if (admin.apps.length === 0) {
-      admin.initializeApp({
+      const saBody = process.env.FIREBASE_SERVICE_ACCOUNT;
+      const options: admin.AppOptions = {
         projectId: firebaseConfig.projectId,
-      });
+      };
+      
+      if (saBody) {
+        try {
+          const sa = JSON.parse(saBody);
+          options.credential = admin.credential.cert(sa);
+          console.log("Firebase Admin: Initializing with Service Account Key.");
+        } catch (e) {
+          console.error("Firebase Admin: FIREBASE_SERVICE_ACCOUNT parse error.");
+        }
+      } else {
+        try {
+          // Only attempt ADC if no SA is provided
+          options.credential = admin.credential.applicationDefault();
+          console.log("Firebase Admin: Using Application Default Credentials.");
+        } catch (e) {
+          console.log("Firebase Admin: ADC not available, falling back to minimal init.");
+        }
+      }
+
+      admin.initializeApp(options);
     }
     
     const dbId = firebaseConfig.firestoreDatabaseId;
@@ -30,7 +51,18 @@ function getDb() {
     }
     return db;
   } catch (e: any) {
-    console.error("Firebase Admin Initialization Error:", e);
+    console.error("Firebase Admin Global Init Error:", e);
+    // Last ditch effort: initialize with just project ID if not already initialized
+    if (admin.apps.length === 0) {
+      try {
+        admin.initializeApp({ projectId: firebaseConfig.projectId });
+        db = admin.firestore();
+        return db;
+      } catch (innerE) {
+        console.error("Firebase Admin Zero-Cred Init failed:", innerE);
+        throw innerE;
+      }
+    }
     throw e;
   }
 }
@@ -1095,6 +1127,12 @@ async function startServer() {
     }
 
     try {
+      // Ensure DB is initialized
+      const database = getDb();
+      if (!database) {
+        throw new Error("Database initialization failed (Check credentials)");
+      }
+
       // 1. Verify credentials
       let userId: string | null = await getUserIdFromApiKey(apiKey);
       let userProfile: any = null;
